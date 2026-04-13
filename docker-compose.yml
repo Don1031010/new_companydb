@@ -1,0 +1,78 @@
+services:
+
+  db:
+    container_name: db
+    image: postgres:17-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  web:
+    container_name: web
+    build: .
+    # Run migrations then collectstatic then gunicorn.
+    # depends_on with service_healthy ensures db is accepting connections first.
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput --clear &&
+             gunicorn mysite.wsgi:application --config gunicorn.conf.py"
+    volumes:
+      # Mount source code so edits are picked up without rebuilding.
+      - .:/app
+      # Named volumes for static/media so nginx can reach them.
+      - static_volume:/app/static
+      - media_volume:/app/media
+    env_file:
+      - .env
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scraper:
+    container_name: scraper
+    build:
+      context: .
+      args:
+        INSTALL_PLAYWRIGHT: "true"
+    volumes:
+      # Same source mount as web — full access to Django models and commands.
+      - .:/app
+      - media_volume:/app/media
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    # Only starts when explicitly invoked — never runs with plain `docker compose up`.
+    profiles:
+      - scraper
+
+  nginx:
+    container_name: nginx
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - static_volume:/app/static:ro
+      - media_volume:/app/media:ro
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  static_volume:
+  media_volume:

@@ -1,0 +1,47 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# ── Django ────────────────────────────────────────────────────────────────────
+*.sqlite3
+/media/
+/static/
+
+# ── Data files (re-downloadable) ──────────────────────────────────────────────
+*.xls
+*.xlsx
+*.csv
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+# Keep docker-compose.yml and Dockerfile — exclude local overrides
+docker-compose.override.yml
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+.claude/
+
+# ── Editor / OS ───────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# ── Logs / coverage ───────────────────────────────────────────────────────────
+*.log
+.coverage
+htmlcov/
