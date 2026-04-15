@@ -181,6 +181,46 @@ docker exec -it web python manage.py fetch_shareholders --days 600
 
 ---
 
+## sync_edinet_index
+
+One-time (or periodic) cache warm-up that scans the EDINET document list API day by day
+and populates the `EDINETDocument` table for all companies in the database.
+After running this, `fetch_edinet` uses the cache for every company and completes in
+seconds rather than minutes per company.
+
+Only stores documents whose EDINET code matches a Company in the database, and only
+for the form codes used by `fetch_edinet` and `fetch_shareholders`
+(030000, 040000, 040001, 043000, 043001, 043A00).
+Already-synced dates are skipped automatically — re-running is safe and fast.
+
+```
+docker compose exec web python manage.py sync_edinet_index [flags]
+```
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--years N` | 5 | Scan this many past calendar years |
+| `--days N` | — | Scan this many past days (mutually exclusive with `--years`) |
+| `--delay N` | 0.5 | Seconds between API requests |
+| `--force` | off | Re-scan dates already in the DB |
+
+### Common invocations
+
+```bash
+# Full 5-year sync (run once; takes ~15 minutes)
+docker compose exec web python manage.py sync_edinet_index
+
+# Catch up on the past month
+docker compose exec web python manage.py sync_edinet_index --days 30
+
+# Re-scan everything from scratch
+docker compose exec web python manage.py sync_edinet_index --force
+```
+
+---
+
 ## fetch_edinet
 
 Fetches full annual (and semi-annual) financial statements from EDINET via the EDINET API v2.
@@ -315,6 +355,7 @@ docker compose exec web python manage.py fetch_tse --all --year 2026
 | `fetch_jpx_listings --skip-detail` | Weekly | Catches new listings and delistings |
 | `fetch_jpx_listings --detail-only` | Weekly | Refreshes representative, address, earnings dates, disclosure links |
 | `fetch_jpx_prices` | Daily | Share price and market cap |
-| `fetch_shareholders` | Quarterly | After annual report filing season; also populates EDINET cache |
+| `sync_edinet_index` | Monthly | Keep EDINETDocument cache current; run `--days 35` for incremental updates |
+| `fetch_shareholders` | Quarterly | After annual report filing season |
 | `fetch_tse --all --year YYYY` | Quarterly | After each earnings season; run for current and prior fiscal year |
 | `fetch_edinet --all --year YYYY` | Annually | After annual report filing season (June–July for March fiscal year companies) |

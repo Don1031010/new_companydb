@@ -1,7 +1,9 @@
 from django.db import models
+from modelcluster.fields import ParentalKey
+from modelcluster.models import ClusterableModel
 
 
-class FinancialReport(models.Model):
+class FinancialReport(ClusterableModel):
     """
     Container for one filing (決算短信 or 有価証券報告書).
     Links a Company to its set of financial statements for a given period.
@@ -60,10 +62,10 @@ class FinancialReport(models.Model):
 class IncomeStatement(models.Model):
     """損益計算書 (P&L). All monetary values in JPY (thousands 千円)."""
 
-    report = models.OneToOneField(
+    report = ParentalKey(
         FinancialReport,
         on_delete=models.CASCADE,
-        related_name="income_statement",
+        related_name="income_statements",
     )
     # --- Top line ---
     revenue = models.BigIntegerField(null=True, blank=True, help_text="売上高")
@@ -116,10 +118,10 @@ class IncomeStatement(models.Model):
 class BalanceSheet(models.Model):
     """貸借対照表 (B/S). All monetary values in JPY (thousands 千円)."""
 
-    report = models.OneToOneField(
+    report = ParentalKey(
         FinancialReport,
         on_delete=models.CASCADE,
-        related_name="balance_sheet",
+        related_name="balance_sheets",
     )
     # --- Assets ---
     total_assets = models.BigIntegerField(null=True, blank=True, help_text="総資産")
@@ -193,10 +195,10 @@ class BalanceSheet(models.Model):
 class CashFlowStatement(models.Model):
     """キャッシュ・フロー計算書. All monetary values in JPY (thousands 千円)."""
 
-    report = models.OneToOneField(
+    report = ParentalKey(
         FinancialReport,
         on_delete=models.CASCADE,
-        related_name="cash_flow_statement",
+        related_name="cash_flow_statements",
     )
     operating_cf = models.BigIntegerField(
         null=True, blank=True, help_text="営業活動によるCF"
