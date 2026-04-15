@@ -121,6 +121,9 @@ ATTACHMENT_BALANCE_MAP = {
     "LeaseObligationsNCL": "lease_obligations_non_current",
     "NetAssets": "net_assets",
     "ShareholdersEquity": "shareholders_equity",
+    "CapitalStock": "capital_stock",
+    "RetainedEarnings": "retained_earnings",
+    "NonControllingInterests": "non_controlling_interests",
 }
 
 INCOME_FIELDS = set(TSE_INCOME_MONETARY.values()) | set(TSE_INCOME_RATIO.values()) | set(TSE_INCOME_PERSHARE.values())

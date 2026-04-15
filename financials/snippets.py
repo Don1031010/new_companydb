@@ -98,6 +98,11 @@ class FinancialReportViewSet(SnippetViewSet):
                 FieldPanel("equity_ratio"),
                 FieldPanel("book_value_per_share"),
             ]),
+            FieldRowPanel([
+                FieldPanel("capital_stock"),
+                FieldPanel("retained_earnings"),
+                FieldPanel("non_controlling_interests"),
+            ]),
         ]),
 
         InlinePanel("cash_flow_statements", heading="CF計算書", max_num=1, panels=[
@@ -186,6 +191,11 @@ class BalanceSheetViewSet(SnippetViewSet):
             FieldPanel("shareholders_equity"),
             FieldPanel("equity_ratio"),
             FieldPanel("book_value_per_share"),
+        ]),
+        FieldRowPanel([
+            FieldPanel("capital_stock"),
+            FieldPanel("retained_earnings"),
+            FieldPanel("non_controlling_interests"),
         ]),
     ]
 
