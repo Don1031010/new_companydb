@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "home",
     "search",
     "listings",
+    "financials",
     
     "wagtail.contrib.forms",
     "django.contrib.postgres",
@@ -50,6 +51,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.humanize",
 ]
 
 MIDDLEWARE = [

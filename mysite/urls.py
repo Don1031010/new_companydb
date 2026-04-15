@@ -15,6 +15,8 @@ urlpatterns = [
     path("documents/", include(wagtaildocs_urls)),
     path("search/", search_views.search, name="search"),
     path("companies/", listings_views.company_list, name="company_list"),
+    path("companies/<str:stock_code>/", listings_views.company_detail, name="company_detail"),
+    path("companies/<str:stock_code>/disclosures/", listings_views.company_disclosures, name="company_disclosures"),
 ]
 
 

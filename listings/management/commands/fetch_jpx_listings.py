@@ -592,13 +592,19 @@ class Command(BaseCommand):
         All hidden rows (display:none) are included since Playwright sees the full DOM.
         """
         try:
-            page.evaluate("changeTab('2')")
+            tab = page.query_selector("a:text('適時開示情報'), input[value='適時開示情報']")
+            if tab:
+                tab.click()
+            else:
+                page.evaluate("changeTab('2')")
+            page.wait_for_load_state("networkidle", timeout=15_000)
             page.wait_for_selector(
                 "tr[id^='1101_'], tr[id^='1102_']",
-                timeout=10_000,
+                timeout=15_000,
                 state="attached",
             )
-        except Exception:
+        except Exception as e:
+            logger.warning("_scrape_disclosures failed: %s (url=%s)", e, page.url)
             return []
 
         def parse_row(row) -> dict | None:
@@ -628,13 +634,14 @@ class Command(BaseCommand):
             if not pdf_url:
                 return None  # no stable key — skip
 
-            # Column 2: XBRL (onclick="xbrlDL('/disc/...')")
+            # Column 2: XBRL — onclick is on a child <img> calling doDownload(..., '/path/to.zip')
             xbrl_url = ""
             if len(tds) > 2:
-                onclick = tds[2].get_attribute("onclick") or ""
-                m = re.search(r"xbrlDL\('(/[^']+)'\)", onclick)
+                el = tds[2].query_selector("[onclick]") or tds[2]
+                onclick = el.get_attribute("onclick") or ""
+                m = re.search(r"'(/[^']+\.zip)'", onclick)
                 if m:
-                    xbrl_url = JPX_HOST + m.group(1)
+                    xbrl_url = JPX_HOST + "/disc" + m.group(1)
 
             # Columns 3–4: HTML summary + attachment (present in 1101 rows)
             html_summary_url = ""
@@ -692,7 +699,7 @@ class Command(BaseCommand):
 
         created = 0
         for d in disclosures:
-            _, was_created = DisclosureRecord.objects.get_or_create(
+            obj, was_created = DisclosureRecord.objects.get_or_create(
                 company=company,
                 pdf_url=d["pdf_url"],
                 defaults={
@@ -705,6 +712,16 @@ class Command(BaseCommand):
             )
             if was_created:
                 created += 1
+            else:
+                # Patch any URL fields that were empty on the existing record
+                patch = {}
+                for field in ("xbrl_url", "html_summary_url", "html_attachment_url"):
+                    if not getattr(obj, field) and d[field]:
+                        patch[field] = d[field]
+                if patch:
+                    for field, value in patch.items():
+                        setattr(obj, field, value)
+                    obj.save(update_fields=list(patch.keys()))
 
         company.disclosures_scraped_at = timezone.now()
         company.save(update_fields=["disclosures_scraped_at"])

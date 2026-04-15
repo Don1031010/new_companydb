@@ -28,6 +28,7 @@ from decimal import Decimal, InvalidOperation
 import requests
 
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 from listings.models import Company
 
@@ -69,6 +70,23 @@ def _parse_date(value: str) -> date | None:
         return None
 
 
+def _parse_price_time(value: str) -> datetime | None:
+    """
+    Parse trade time from the API (e.g. '15:30') and combine with today's date.
+    The API field DPPT carries the time shown as (HH:MM) below the current price.
+    Returns a timezone-aware datetime, or None if the value is missing/unparseable.
+    """
+    value = value.strip().lstrip("(").rstrip(")")
+    if not value or value == "-":
+        return None
+    try:
+        t = datetime.strptime(value, "%H:%M").time()
+        today = timezone.localdate()
+        return timezone.make_aware(datetime.combine(today, t))
+    except ValueError:
+        return None
+
+
 def _fetch_prices(session: requests.Session, stock_code: str) -> dict | None:
     """
     Fetch price data for one stock code via the JPX JSON API.
@@ -87,7 +105,8 @@ def _fetch_prices(session: requests.Session, stock_code: str) -> dict | None:
         logger.warning("Failed to fetch %s: %s", stock_code, e)
         return None
 
-    stock_data = data.get("section1", {}).get("data", {})
+    # Guard against null — API returns {"section1": {"data": null}} for delisted companies
+    stock_data = data.get("section1", {}).get("data") or {}
     # Key is "<code>/T" for TSE; take first matching entry
     record = None
     for key, val in stock_data.items():
@@ -97,19 +116,22 @@ def _fetch_prices(session: requests.Session, stock_code: str) -> dict | None:
 
     if not record:
         logger.warning("No record in API response for %s", stock_code)
-        return None
+        return {}  # empty dict = no data (possibly delisted), not a network error
 
     share_price = _parse_price(record.get("DPP", "-"))
     yearly_high = _parse_price(record.get("YHPR", "-"))
     yearly_high_date = _parse_date(record.get("YHPD", "-"))
     yearly_low = _parse_price(record.get("YLPR", "-"))
     yearly_low_date = _parse_date(record.get("YLPD", "-"))
+    # DPPT carries the trade time shown as (HH:MM) below the current price
+    share_price_at = _parse_price_time(record.get("DPPT", "-"))
 
     if share_price is None and yearly_high is None and yearly_low is None:
         return {}  # empty dict signals "no data, skip cleanly"
 
     return {
         "share_price": share_price,
+        "share_price_at": share_price_at,
         "yearly_high": yearly_high,
         "yearly_high_date": yearly_high_date,
         "yearly_low": yearly_low,
@@ -126,12 +148,20 @@ class Command(BaseCommand):
             help="Only fetch prices for these stock codes (e.g. 6758 7203)",
         )
         parser.add_argument(
+            "--start-from", metavar="CODE",
+            help="Resume from this stock code (inclusive), skipping everything before it",
+        )
+        parser.add_argument(
             "--limit", type=int, default=0,
             help="Stop after N companies (0 = all)",
         )
         parser.add_argument(
             "--delay", type=float, default=0.5,
             help="Seconds between requests (default: 0.5)",
+        )
+        parser.add_argument(
+            "--mark-delisted", action="store_true", default=False,
+            help="Set status=watchlist on companies that return no price data (for review)",
         )
 
     def handle(self, *args, **options):
@@ -143,6 +173,8 @@ class Command(BaseCommand):
         )
         if options["codes"]:
             qs = qs.filter(stock_code__in=options["codes"])
+        if options["start_from"]:
+            qs = qs.filter(stock_code__gte=options["start_from"])
         if options["limit"]:
             qs = qs[: options["limit"]]
 
@@ -152,7 +184,7 @@ class Command(BaseCommand):
         session = requests.Session()
         session.headers.update(SESSION_HEADERS)
 
-        updated = errors = skipped = 0
+        updated = errors = skipped = flagged = 0
 
         for i, company in enumerate(qs, start=1):
             if i > 1:
@@ -170,11 +202,18 @@ class Command(BaseCommand):
                 errors += 1
                 continue
             if not data:
-                self.stdout.write(self.style.WARNING("NO DATA"))
-                skipped += 1
+                if options["mark_delisted"] and company.status == "active":
+                    company.status = "watchlist"
+                    company.save(update_fields=["status"])
+                    self.stdout.write(self.style.WARNING("NO DATA — flagged as watchlist"))
+                    flagged += 1
+                else:
+                    self.stdout.write(self.style.WARNING("NO DATA (possibly delisted)"))
+                    skipped += 1
                 continue
 
             company.share_price = data["share_price"]
+            company.share_price_at = data["share_price_at"]
             company.yearly_high = data["yearly_high"]
             company.yearly_high_date = data["yearly_high_date"]
             company.yearly_low = data["yearly_low"]
@@ -191,8 +230,7 @@ class Command(BaseCommand):
             )
             updated += 1
 
-        self.stdout.write(
-            self.style.MIGRATE_HEADING(
-                f"\nDone. updated={updated}  skipped={skipped}  errors={errors}"
-            )
-        )
+        summary = f"\nDone. updated={updated}  skipped={skipped}  errors={errors}"
+        if flagged:
+            summary += f"  flagged_watchlist={flagged}"
+        self.stdout.write(self.style.MIGRATE_HEADING(summary))

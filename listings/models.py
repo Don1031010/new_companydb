@@ -325,6 +325,11 @@ class Company(ClusterableModel):
         blank=True,
         verbose_name=_("株価（円）"),
     )
+    share_price_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_("株価時刻"),
+    )
     yearly_high = models.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -543,6 +548,12 @@ class Company(ClusterableModel):
         if self.shares_outstanding and self.share_price:
             self.market_cap = self.shares_outstanding * self.share_price / 1_000_000
         super().save(*args, **kwargs)
+
+    @property
+    def treasury_shares_pct(self):
+        if self.shares_outstanding and self.treasury_shares:
+            return round(self.treasury_shares / self.shares_outstanding * 100, 1)
+        return None
 
     @property
     def primary_exchange(self):
