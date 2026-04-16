@@ -154,6 +154,24 @@ def parse_fiscal_month(s: str) -> str:
         return ""
 
 
+def parse_fiscal_day(s: str) -> int | None:
+    """
+    '3月31日' → 31,  '4月30日' → 30,  '3月末日' → None,  '3月' → None.
+    Returns None when the day is the last day of the month (末日) or not specified.
+    """
+    try:
+        m = re.search(r"月(\d+)日", s)
+        if m:
+            day = int(m.group(1))
+            # Treat the last day of common fiscal months as None (= month-end)
+            # so we don't clutter the DB with 31/30/28 for companies that just
+            # end on the last day.  We detect this by checking if 末日 appears.
+            return day
+        return None
+    except Exception:
+        return None
+
+
 def start_xvfb(display: str = ":99") -> subprocess.Popen:
     proc = subprocess.Popen(
         ["Xvfb", display, "-screen", "0", "1280x900x24"],
@@ -634,6 +652,8 @@ class Command(BaseCommand):
             if not pdf_url:
                 return None  # no stable key — skip
 
+            pdf_filename = os.path.basename(pdf_url)
+
             # Column 2: XBRL — onclick is on a child <img> calling doDownload(..., '/path/to.zip')
             xbrl_url = ""
             if len(tds) > 2:
@@ -667,6 +687,7 @@ class Command(BaseCommand):
                 "disclosed_date":      disclosed_date,
                 "title":               title,
                 "pdf_url":             pdf_url,
+                "pdf_filename":        pdf_filename,
                 "xbrl_url":            xbrl_url,
                 "html_summary_url":    html_summary_url,
                 "html_attachment_url": html_attachment_url,
@@ -699,29 +720,48 @@ class Command(BaseCommand):
 
         created = 0
         for d in disclosures:
-            obj, was_created = DisclosureRecord.objects.get_or_create(
-                company=company,
-                pdf_url=d["pdf_url"],
-                defaults={
-                    "disclosed_date":      d["disclosed_date"],
-                    "title":               d["title"],
-                    "xbrl_url":            d["xbrl_url"],
-                    "html_summary_url":    d["html_summary_url"],
-                    "html_attachment_url": d["html_attachment_url"],
-                },
-            )
-            if was_created:
-                created += 1
-            else:
-                # Patch any URL fields that were empty on the existing record
-                patch = {}
-                for field in ("xbrl_url", "html_summary_url", "html_attachment_url"):
-                    if not getattr(obj, field) and d[field]:
-                        patch[field] = d[field]
-                if patch:
+            pdf_filename = d["pdf_filename"]
+            if pdf_filename:
+                # Use pdf_filename as the stable key (same file served by both TDnet and JPX).
+                # Always write the permanent JPX pdf_url, overwriting any temporary TDnet URL.
+                obj, was_created = DisclosureRecord.objects.get_or_create(
+                    company=company,
+                    pdf_filename=pdf_filename,
+                    defaults={
+                        "disclosed_date":      d["disclosed_date"],
+                        "title":               d["title"],
+                        "pdf_url":             d["pdf_url"],
+                        "xbrl_url":            d["xbrl_url"],
+                        "html_summary_url":    d["html_summary_url"],
+                        "html_attachment_url": d["html_attachment_url"],
+                    },
+                )
+                if was_created:
+                    created += 1
+                else:
+                    # Always upgrade to permanent JPX URL; patch any blank URL fields.
+                    patch = {"pdf_url": d["pdf_url"]}
+                    for field in ("xbrl_url", "html_summary_url", "html_attachment_url"):
+                        if not getattr(obj, field) and d[field]:
+                            patch[field] = d[field]
                     for field, value in patch.items():
                         setattr(obj, field, value)
                     obj.save(update_fields=list(patch.keys()))
+            else:
+                # No filename extractable — fall back to pdf_url uniqueness (legacy behaviour)
+                obj, was_created = DisclosureRecord.objects.get_or_create(
+                    company=company,
+                    pdf_url=d["pdf_url"],
+                    defaults={
+                        "disclosed_date":      d["disclosed_date"],
+                        "title":               d["title"],
+                        "xbrl_url":            d["xbrl_url"],
+                        "html_summary_url":    d["html_summary_url"],
+                        "html_attachment_url": d["html_attachment_url"],
+                    },
+                )
+                if was_created:
+                    created += 1
 
         company.disclosures_scraped_at = timezone.now()
         company.save(update_fields=["disclosures_scraped_at"])
@@ -792,8 +832,10 @@ class Command(BaseCommand):
             company.shares_outstanding = shares
         if unit := parse_int(data.get("unit_shares_text", "")):
             company.unit_shares = unit
-        if fm := parse_fiscal_month(data.get("fiscal_year_end_text", "")):
-            company.fiscal_year_end_month = fm
+        if fye := data.get("fiscal_year_end_text", ""):
+            if fm := parse_fiscal_month(fye):
+                company.fiscal_year_end_month = fm
+            company.fiscal_year_end_day = parse_fiscal_day(fye)
 
         company.is_margin_trading     = data.get("is_margin_trading",     company.is_margin_trading)
         company.is_securities_lending = data.get("is_securities_lending", company.is_securities_lending)

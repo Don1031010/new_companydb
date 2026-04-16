@@ -67,6 +67,21 @@ CF_XBRL_MAP = {
     "DepreciationAndAmortizationOpeCF": "depreciation",                        # 減価償却費
 }
 
+# Employee data — annual report only (有価証券報告書, form_code=030000).
+# Same element names appear in both consolidated and non-consolidated contexts,
+# so we use two separate maps keyed by consolidation type.
+EMPLOYEE_CONSOLIDATED_XBRL_MAP = {
+    "NumberOfEmployees": "consolidated_headcount",                              # 連結従業員数
+    "AverageNumberOfTemporaryWorkers": "consolidated_temp_workers",             # 連結臨時従業員数
+}
+EMPLOYEE_NONCONS_XBRL_MAP = {
+    "NumberOfEmployees": "headcount",                                           # 従業員数（単体）
+    "AverageNumberOfTemporaryWorkers": "temp_workers",                          # 臨時従業員数（単体）
+    "AverageAgeYearsInformationAboutReportingCompanyInformationAboutEmployees": "average_age",
+    "AverageLengthOfServiceYearsInformationAboutReportingCompanyInformationAboutEmployees": "average_tenure",
+    "AverageAnnualSalaryInformationAboutReportingCompanyInformationAboutEmployees": "average_salary",
+}
+
 
 class EdinetClient:
     """Thin wrapper around EDINET API v2."""
@@ -364,6 +379,79 @@ class EdinetClient:
             print(f"  final values: {values}")
         return values
 
+    @staticmethod
+    def parse_employee_data(zf: zipfile.ZipFile, verbose: bool = False) -> dict:
+        """
+        Extracts employee figures from the XBRL_TO_CSV files inside the zip.
+        Returns a flat dict with keys matching EmployeeInfo field names.
+
+        Unlike the main financial parser:
+        - Accepts both 連結 and 個別 rows (two contexts for the same element).
+        - Does NOT filter out context_ids containing '_' (NonConsolidatedMember uses them).
+        - Only processes 当期末 rows (headcounts are point-in-time).
+        """
+        import csv
+        import io as _io
+
+        csv_files = [n for n in zf.namelist() if n.endswith(".csv") and "XBRL_TO_CSV" in n]
+        financial_csvs = [n for n in csv_files if not n.split("/")[-1].startswith("jpaud")]
+        if not financial_csvs:
+            financial_csvs = csv_files
+
+        all_targets = (
+            set(EMPLOYEE_CONSOLIDATED_XBRL_MAP) | set(EMPLOYEE_NONCONS_XBRL_MAP)
+        )
+        values: dict = {}
+
+        for csv_name in financial_csvs:
+            if verbose:
+                print(f"  [employee] parsing CSV: {csv_name}")
+            with zf.open(csv_name) as raw:
+                reader = csv.reader(
+                    _io.TextIOWrapper(raw, encoding="utf-16"),
+                    delimiter="\t",
+                )
+                next(reader, None)
+                for row in reader:
+                    if len(row) < 9:
+                        continue
+                    element_id    = row[0].strip('"')
+                    context_id    = row[2].strip('"')
+                    fiscal_period = row[3].strip('"')
+                    raw_value     = row[8].strip('"')
+
+                    local = element_id.split(":")[-1] if ":" in element_id else element_id
+
+                    if fiscal_period not in ("当期末", "当期"):
+                        continue
+                    if local not in all_targets:
+                        continue
+                    if not raw_value or raw_value in ("－", "-", ""):
+                        continue
+                    try:
+                        num = Decimal(raw_value.replace(",", ""))
+                    except Exception:
+                        continue
+
+                    # Distinguish consolidated vs non-consolidated by context_id.
+                    # Consolidated total:   CurrentYearInstant  (bare, no suffix)
+                    # Non-consolidated:     CurrentYearInstant_NonConsolidatedMember
+                    # Segment/other rows have other suffixes — skip them.
+                    if context_id == "CurrentYearInstant" and local in EMPLOYEE_CONSOLIDATED_XBRL_MAP:
+                        field = EMPLOYEE_CONSOLIDATED_XBRL_MAP[local]
+                    elif context_id == "CurrentYearInstant_NonConsolidatedMember" and local in EMPLOYEE_NONCONS_XBRL_MAP:
+                        field = EMPLOYEE_NONCONS_XBRL_MAP[local]
+                    else:
+                        continue
+
+                    values[field] = int(num) if num == num.to_integral_value() else num
+                    if verbose:
+                        print(f"    [employee] {local} (ctx={context_id}) → {field} = {num}")
+
+        if verbose:
+            print(f"  [employee] final values: {values}")
+        return values
+
     # ------------------------------------------------------------------
     # 4. Store to Django models
     # ------------------------------------------------------------------
@@ -374,7 +462,7 @@ class EdinetClient:
         doc_meta is one entry from get_docs_for_company().
         Returns (report, values) for inspection; both may be None on failure.
         """
-        from financials.models import FinancialReport, IncomeStatement, BalanceSheet, CashFlowStatement
+        from financials.models import FinancialReport, IncomeStatement, BalanceSheet, CashFlowStatement, EmployeeInfo
         from listings.models import Company
 
         edinet_code = doc_meta["edinetCode"]
@@ -419,20 +507,28 @@ class EdinetClient:
 
         fiscal_year = int(period_end_str[:4]) if period_end_str else None
 
-        # Upsert by natural key (company, fiscal_year, fiscal_quarter) so EDINET and
-        # TDnet records for the same period merge into one FinancialReport row.
-        report, created = FinancialReport.objects.update_or_create(
-            company=company,
-            fiscal_year=fiscal_year,
-            fiscal_quarter=fiscal_quarter,
-            defaults=dict(
-                edinet_doc_id=doc_id,
-                period_end=period_end_str,
-                report_type=report_type,
-                is_consolidated=True,
-                filed_at=submitted_at,
-            ),
-        )
+        # Prefer lookup by edinet_doc_id (exact document match) to avoid a
+        # UniqueViolation when the same doc was previously stored under a
+        # different natural key (company/fiscal_year/quarter).  Only fall back
+        # to the natural-key upsert when the doc is genuinely new.
+        report = FinancialReport.objects.filter(edinet_doc_id=doc_id).first()
+        if report:
+            created = False
+        else:
+            # Upsert by natural key so EDINET and TDnet records for the same
+            # period can merge into one FinancialReport row.
+            report, created = FinancialReport.objects.update_or_create(
+                company=company,
+                fiscal_year=fiscal_year,
+                fiscal_quarter=fiscal_quarter,
+                defaults=dict(
+                    edinet_doc_id=doc_id,
+                    period_end=period_end_str,
+                    report_type=report_type,
+                    is_consolidated=True,
+                    filed_at=submitted_at,
+                ),
+            )
         logger.info("%s FinancialReport %s", "Created" if created else "Updated", report)
 
         # Download + parse
@@ -454,6 +550,16 @@ class EdinetClient:
         _upsert(IncomeStatement, report, values, INCOME_XBRL_MAP)
         _upsert(BalanceSheet, report, values, BALANCE_XBRL_MAP)
         _upsert(CashFlowStatement, report, values, CF_XBRL_MAP)
+
+        # Employee data is only in the annual report (有価証券報告書).
+        # Uses a direct upsert rather than _upsert() because emp_values already
+        # contains field names as keys (both consolidated and non-consolidated),
+        # and the combined XBRL map would drop consolidated_* fields on merge.
+        if form_code == "030000" and zf is not None:
+            emp_values = self.parse_employee_data(zf, verbose=verbose)
+            if emp_values:
+                EmployeeInfo.objects.update_or_create(report=report, defaults=emp_values)
+
         logger.info("Stored financials for %s", report)
         return report, values
 

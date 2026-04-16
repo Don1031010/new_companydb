@@ -291,6 +291,12 @@ class Company(ClusterableModel):
         blank=True,
         verbose_name=_("決算期（月）"),
     )
+    fiscal_year_end_day = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        verbose_name=_("決算期（日）"),
+        help_text=_("決算期末の日付。月末の場合は空欄。"),
+    )
     earnings_date_annual = models.DateField(
         null=True, blank=True,
         verbose_name=_("決算発表（予定）"),
@@ -468,6 +474,7 @@ class Company(ClusterableModel):
             FieldRowPanel([
                 FieldPanel("scale_category"),
                 FieldPanel("fiscal_year_end_month"),
+                FieldPanel("fiscal_year_end_day"),
             ]),
         ], heading=_("業種・規模")),
 
@@ -831,6 +838,12 @@ class DisclosureRecord(models.Model):
         blank=True,
         verbose_name=_("HTML（添付）"),
     )
+    pdf_filename = models.CharField(
+        max_length=100,
+        blank=True,
+        verbose_name=_("PDFファイル名"),
+        help_text="e.g. 140120260406599058.pdf — stable across TDnet and JPX",
+    )
     scraped_at = models.DateTimeField(auto_now=True, verbose_name=_("取得日時"))
 
     panels = [
@@ -852,10 +865,16 @@ class DisclosureRecord(models.Model):
     class Meta:
         verbose_name = _("適時開示")
         verbose_name_plural = _("適時開示")
-        unique_together = [("company", "pdf_url")]
         ordering = ["company__stock_code", "-disclosed_date"]
         indexes = [
             models.Index(fields=["company", "-disclosed_date"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["company", "pdf_filename"],
+                condition=models.Q(pdf_filename__gt=""),
+                name="unique_disclosure_company_filename",
+            ),
         ]
 
     def __str__(self):

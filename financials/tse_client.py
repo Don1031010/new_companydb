@@ -126,6 +126,33 @@ ATTACHMENT_BALANCE_MAP = {
     "NonControllingInterests": "non_controlling_interests",
 }
 
+# ---------------------------------------------------------------------------
+# Forecast element maps  (same local names as actuals; context carries "ForecastMember")
+# ---------------------------------------------------------------------------
+
+TSE_FORECAST_MONETARY = {
+    # J-GAAP
+    "NetSales": "revenue",
+    "OperatingIncome": "operating_profit",
+    "OrdinaryIncome": "ordinary_profit",
+    "ProfitAttributableToOwnersOfParent": "net_income",
+    # IFRS
+    "RevenueIFRS": "revenue",
+    "OperatingIncomeIFRS": "operating_profit",
+    "ProfitAttributableToOwnersOfParentIFRS": "net_income",
+}
+TSE_FORECAST_RATIO = {
+    "ChangeInNetSales": "revenue_yoy",
+    "ChangeInOperatingIncome": "op_profit_yoy",
+    "ChangeInRevenueIFRS": "revenue_yoy",
+    "ChangeInOperatingIncomeIFRS": "op_profit_yoy",
+}
+TSE_FORECAST_PERSHARE = {
+    "NetIncomePerShare": "eps",
+    "BasicEarningsPerShareIFRS": "eps",
+}
+
+
 INCOME_FIELDS = set(TSE_INCOME_MONETARY.values()) | set(TSE_INCOME_RATIO.values()) | set(TSE_INCOME_PERSHARE.values())
 BALANCE_FIELDS = (set(TSE_BALANCE_MONETARY.values()) | set(TSE_BALANCE_RATIO.values())
                   | set(TSE_BALANCE_PERSHARE.values()) | set(ATTACHMENT_BALANCE_MAP.values()))
@@ -302,6 +329,81 @@ def parse_tse_xbrl(zf: zipfile.ZipFile, fiscal_quarter: int, verbose: bool = Fal
 
 
 # ---------------------------------------------------------------------------
+# Forecast parser
+# ---------------------------------------------------------------------------
+
+def parse_forecast_xbrl(zf: zipfile.ZipFile, verbose: bool = False) -> tuple[dict, dict]:
+    """
+    Extract financial and dividend forecasts from the TDnet iXBRL Summary file.
+    Returns (fin_values, div_values) — dicts with ForecastRecord / DividendForecast
+    field names as keys.
+
+    Forecast contexts carry "ForecastMember" instead of "ResultMember".
+    Financial forecasts use CurrentYearDuration; dividend forecasts use
+    CurrentYearInstant (both consolidated).
+    """
+    fin_values: dict = {}
+    div_values: dict = {}
+
+    # Dividend type is encoded as a context member, not in the element name.
+    # e.g. CurrentYearDuration_SecondQuarterMember_NonConsolidatedMember_ForecastMember
+    DIVIDEND_MEMBER_MAP = {
+        "SecondQuarterMember": "interim_dividend",   # 中間配当 (H1)
+        "YearEndMember":       "year_end_dividend",  # 期末配当
+        "AnnualMember":        "annual_dividend",    # 年間合計
+    }
+
+    for fname in zf.namelist():
+        if "Summary" not in fname or not fname.endswith("-ixbrl.htm"):
+            continue
+        if verbose:
+            print(f"  [forecast] parsing: {fname}")
+        for local, ctx, val, scale in _extract_ixbrl(zf, fname):
+            if "CurrentYearDuration" not in ctx:
+                continue
+
+            is_forecast = "ForecastMember" in ctx
+            is_result = "ResultMember" in ctx
+            if not (is_forecast or is_result):
+                continue
+
+            # Financial forecast — consolidated ForecastMember only.
+            # Note: "ConsolidatedMember" is a substring of "NonConsolidatedMember",
+            # so we must explicitly exclude the Non- variant first.
+            if is_forecast and "NonConsolidated" not in ctx and "ConsolidatedMember" in ctx:
+                if local in TSE_FORECAST_MONETARY:
+                    yen = val * (Decimal(10) ** scale)
+                    fin_values[TSE_FORECAST_MONETARY[local]] = int(yen // 1000)
+                    if verbose:
+                        print(f"    [forecast:fin] {local} → {TSE_FORECAST_MONETARY[local]} = {int(yen//1000):,}")
+                elif local in TSE_FORECAST_RATIO:
+                    fin_values[TSE_FORECAST_RATIO[local]] = val / 100
+                    if verbose:
+                        print(f"    [forecast:fin] {local} → {TSE_FORECAST_RATIO[local]} = {val/100}")
+                elif local in TSE_FORECAST_PERSHARE:
+                    fin_values[TSE_FORECAST_PERSHARE[local]] = val
+                    if verbose:
+                        print(f"    [forecast:fin] {local} → {TSE_FORECAST_PERSHARE[local]} = {val}")
+
+            # Dividends — DividendPerShare, NonConsolidated context.
+            # ForecastMember → forecast fields; ResultMember → _paid fields.
+            # Dividend type (Interim / YearEnd / Annual) is encoded as a context member.
+            if local == "DividendPerShare" and "NonConsolidated" in ctx:
+                for member, base_field in DIVIDEND_MEMBER_MAP.items():
+                    if member in ctx:
+                        field = base_field if is_forecast else base_field + "_paid"
+                        div_values[field] = val * (Decimal(10) ** scale)
+                        if verbose:
+                            tag = "forecast" if is_forecast else "actual"
+                            print(f"    [forecast:div] DividendPerShare ({member}, {tag}) → {field} = {val}")
+                        break
+
+    if verbose:
+        print(f"  [forecast] fin={fin_values}  div={div_values}")
+    return fin_values, div_values
+
+
+# ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
 
@@ -322,7 +424,7 @@ class TseClient:
 
         Returns (report, values); both may be None on failure.
         """
-        from financials.models import FinancialReport, IncomeStatement, BalanceSheet, CashFlowStatement
+        from financials.models import FinancialReport, IncomeStatement, BalanceSheet, CashFlowStatement, ForecastRecord, DividendForecast
         from financials.edinet_client import _upsert
 
         title = disclosure.title
@@ -381,6 +483,34 @@ class TseClient:
         _upsert_fields(IncomeStatement, report, values, INCOME_FIELDS)
         _upsert_fields(BalanceSheet, report, values, BALANCE_FIELDS)
         _upsert_fields(CashFlowStatement, report, values, CF_FIELDS)
+
+        # Forecasts — always insert a new row to preserve revision history
+        fin_fc, div_fc = parse_forecast_xbrl(zf, verbose=verbose)
+        if fin_fc:
+            _, created = ForecastRecord.objects.update_or_create(
+                source_report=report,
+                defaults=dict(
+                    company=disclosure.company,
+                    announced_at=disclosure.disclosed_date,
+                    target_fiscal_year=fiscal_year,
+                    target_fiscal_quarter=4,
+                    **fin_fc,
+                ),
+            )
+            if verbose:
+                print(f"  {'Created' if created else 'Updated'} ForecastRecord for FY{fiscal_year}")
+        if div_fc:
+            _, created = DividendForecast.objects.update_or_create(
+                source_report=report,
+                defaults=dict(
+                    company=disclosure.company,
+                    announced_at=disclosure.disclosed_date,
+                    target_fiscal_year=fiscal_year,
+                    **div_fc,
+                ),
+            )
+            if verbose:
+                print(f"  {'Created' if created else 'Updated'} DividendForecast for FY{fiscal_year}")
 
         logger.info("Stored TDnet financials for %s", report)
         return report, values

@@ -348,12 +348,124 @@ docker compose exec web python manage.py fetch_tse --all --year 2026
 
 ---
 
+## fetch_nse_listings
+
+Fetches all listed companies from the Nagoya Stock Exchange (名古屋証券取引所) via
+its internal JSON API and upserts Company + Listing records.
+No Playwright required — runs in the `web` container.
+
+```
+docker compose exec web python manage.py fetch_nse_listings [flags]
+```
+
+### Phases
+
+**Phase 1 — List collection**
+Fetches all プレミア市場, メイン市場, and ネクスト市場 companies (313 as of 2026).
+- **Dual-listed (TSE + NSE)** — adds an NSE `Listing` row; patches blank `name_en`,
+  `industry_33`, `fiscal_year_end_month`, and `fiscal_year_end_day` fields.
+- **NSE-only (~59 companies)** — creates a new `Company` with `is_non_jpx=True`
+  and an NSE `Listing` row.
+
+**Phase 2 — Detail scrape (`--detail` flag)**
+Calls `/api/stock/view.json` for each NSE-only company (or all NSE companies with
+`--all`) and populates: representative name/title, address, established date,
+listing date, shares outstanding, margin/lending flags, `fiscal_year_end_day`.
+Also backfills recent disclosure records (up to ~10 per company) into
+`DisclosureRecord` using `pdf_filename` as the deduplication key — the same
+filename used by TDnet and JPX, so records merge cleanly.
+
+NSE market segments map to existing choices: `nse_premier`, `nse_main`, `nse_next`.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--detail` | off | Run Phase 2 after Phase 1 |
+| `--detail-only` | off | Skip Phase 1; run Phase 2 only |
+| `--all` | off | Phase 2 for all NSE companies, not just NSE-only |
+| `--delay N` | 0.5 | Seconds between Phase 2 requests |
+| `--dry-run` | off | Parse without writing to DB |
+| `--verbose` | off | Show each company as it is processed |
+
+### Common invocations
+
+```bash
+# Phase 1 only — sync company list and listings
+docker compose exec web python manage.py fetch_nse_listings
+
+# Phase 1 + Phase 2 — full run including detail for NSE-only companies
+docker compose exec web python manage.py fetch_nse_listings --detail
+
+# Phase 2 only — refresh detail for NSE-only companies (skip list sync)
+docker compose exec web python manage.py fetch_nse_listings --detail-only
+
+# Preview
+docker compose exec web python manage.py fetch_nse_listings --dry-run --verbose
+```
+
+---
+
+## fetch_tdnet_daily
+
+Scrapes the TDnet disclosure feed (東証適時開示情報伝達システム) for new disclosure
+records and upserts them into `DisclosureRecord`. No Playwright required — runs in
+the `web` container.
+
+TDnet publishes same-day disclosures (no delay), making this the primary daily source.
+`pdf_url` is set to the temporary TDnet URL (~1 month lifespan); `fetch_jpx_listings`
+overwrites it with the permanent JPX URL when it next runs.
+
+```
+docker compose exec web python manage.py fetch_tdnet_daily [flags]
+```
+
+### What it fetches
+
+Parses `I_list_{page:03d}_{YYYYMMDD}.html` (up to 100 rows per page, paginated
+automatically). Each row provides: stock code, title, PDF link, and XBRL zip link
+(when available). Only companies already in the DB are saved; ETFs, REITs, and other
+non-tracked codes are skipped.
+
+Deduplication key: `(company, pdf_filename)` — the bare PDF filename
+(e.g. `140120260416505389.pdf`) is identical between TDnet and JPX, so records
+created here merge cleanly with those scraped by `fetch_jpx_listings`.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--days N` | 1 | Fetch the last N days including today |
+| `--date YYYY-MM-DD` | today | Fetch a specific date (mutually exclusive with `--days`) |
+| `--dry-run` | off | Parse and print without writing to DB |
+| `--verbose` | off | Show every row, including skipped (company not in DB) |
+
+### Common invocations
+
+```bash
+# Today's disclosures (default)
+docker compose exec web python manage.py fetch_tdnet_daily
+
+# Back-fill the past week
+docker compose exec web python manage.py fetch_tdnet_daily --days 7
+
+# Specific date
+docker compose exec web python manage.py fetch_tdnet_daily --date 2026-04-15
+
+# Preview without saving
+docker compose exec web python manage.py fetch_tdnet_daily --dry-run --verbose
+```
+
+---
+
 ## Recommended update schedule
 
 | Command | Frequency | Notes |
 |---|---|---|
+| `fetch_nse_listings` | Monthly | Catches new NSE listings; safe to re-run (idempotent) |
 | `fetch_jpx_listings --skip-detail` | Weekly | Catches new listings and delistings |
 | `fetch_jpx_listings --detail-only` | Weekly | Refreshes representative, address, earnings dates, disclosure links |
+| `fetch_tdnet_daily` | Daily | Same-day disclosure records; TDnet URLs patched to permanent JPX URLs by weekly `fetch_jpx_listings` run |
 | `fetch_jpx_prices` | Daily | Share price and market cap |
 | `sync_edinet_index` | Monthly | Keep EDINETDocument cache current; run `--days 35` for incremental updates |
 | `fetch_shareholders` | Quarterly | After annual report filing season |

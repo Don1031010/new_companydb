@@ -195,6 +195,159 @@ class BalanceSheet(models.Model):
         return f"B/S – {self.report}"
 
 
+class ForecastRecord(models.Model):
+    """
+    業績予想 — one forecast snapshot as announced at a point in time.
+    Never updated; a new row is inserted for every announcement so the full
+    revision history is preserved.  PDF-only revised forecasts can be entered
+    manually (source_report=None).
+    Monetary values in JPY (同単位 as IncomeStatement).
+    """
+
+    company = models.ForeignKey(
+        "listings.Company",
+        on_delete=models.CASCADE,
+        related_name="forecast_records",
+    )
+    announced_at = models.DateField(help_text="Announcement date (開示日)")
+    source_report = models.ForeignKey(
+        "FinancialReport",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="forecasts",
+        help_text="Quarterly report this forecast was published with (null for standalone revisions)",
+    )
+    target_fiscal_year = models.PositiveSmallIntegerField(help_text="e.g. 2025 for FY2025")
+    target_fiscal_quarter = models.PositiveSmallIntegerField(
+        default=4,
+        help_text="1–4; 4 = full-year forecast",
+    )
+
+    # Forecast figures
+    revenue = models.BigIntegerField(null=True, blank=True, help_text="売上高予想")
+    operating_profit = models.BigIntegerField(null=True, blank=True, help_text="営業利益予想")
+    ordinary_profit = models.BigIntegerField(null=True, blank=True, help_text="経常利益予想")
+    net_income = models.BigIntegerField(null=True, blank=True, help_text="当期純利益予想")
+    eps = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True, help_text="EPS予想"
+    )
+    revenue_yoy = models.DecimalField(
+        max_digits=8, decimal_places=4, null=True, blank=True, help_text="売上高増減率予想"
+    )
+    op_profit_yoy = models.DecimalField(
+        max_digits=8, decimal_places=4, null=True, blank=True, help_text="営業利益増減率予想"
+    )
+
+    class Meta:
+        ordering = ["-announced_at"]
+        indexes = [
+            models.Index(fields=["company", "target_fiscal_year", "-announced_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source_report"],
+                condition=models.Q(source_report__isnull=False),
+                name="unique_forecast_per_report",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.company} FY{self.target_fiscal_year}Q{self.target_fiscal_quarter} forecast @{self.announced_at}"
+
+
+class DividendForecast(models.Model):
+    """
+    配当予想 — one dividend forecast snapshot.
+    Never updated; insert a new row for each announcement.
+    Values in JPY per share (円/株).
+    """
+
+    company = models.ForeignKey(
+        "listings.Company",
+        on_delete=models.CASCADE,
+        related_name="dividend_forecasts",
+    )
+    announced_at = models.DateField(help_text="Announcement date (開示日)")
+    source_report = models.ForeignKey(
+        "FinancialReport",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="dividend_forecasts",
+        help_text="Quarterly report this forecast was published with (null for standalone revisions)",
+    )
+    target_fiscal_year = models.PositiveSmallIntegerField(help_text="e.g. 2025 for FY2025")
+
+    # Forecasts (予想)
+    interim_dividend = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True, help_text="中間配当予想（円/株）"
+    )
+    year_end_dividend = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True, help_text="期末配当予想（円/株）"
+    )
+    annual_dividend = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True, help_text="年間配当予想（円/株）"
+    )
+    # Actuals — paid amounts confirmed in the same report (実績)
+    interim_dividend_paid = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True, help_text="中間配当実績（円/株）"
+    )
+    year_end_dividend_paid = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True, help_text="期末配当実績（円/株）"
+    )
+    annual_dividend_paid = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True, help_text="年間配当実績（円/株）"
+    )
+
+    class Meta:
+        ordering = ["-announced_at"]
+        indexes = [
+            models.Index(fields=["company", "target_fiscal_year", "-announced_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source_report"],
+                condition=models.Q(source_report__isnull=False),
+                name="unique_dividend_forecast_per_report",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.company} FY{self.target_fiscal_year} dividend forecast @{self.announced_at}"
+
+
+class EmployeeInfo(models.Model):
+    """従業員の状況. Only present in annual reports (有価証券報告書). Monetary values in JPY (円)."""
+
+    report = ParentalKey(
+        FinancialReport,
+        on_delete=models.CASCADE,
+        related_name="employee_info",
+    )
+
+    # --- Consolidated (連結) ---
+    consolidated_headcount = models.IntegerField(null=True, blank=True, help_text="連結従業員数")
+    consolidated_temp_workers = models.IntegerField(null=True, blank=True, help_text="連結臨時従業員数（平均）")
+
+    # --- Non-consolidated / parent company (単体) ---
+    headcount = models.IntegerField(null=True, blank=True, help_text="従業員数（単体）")
+    temp_workers = models.IntegerField(null=True, blank=True, help_text="臨時従業員数（単体平均）")
+    average_age = models.DecimalField(
+        max_digits=4, decimal_places=1, null=True, blank=True, help_text="平均年齢（歳）"
+    )
+    average_tenure = models.DecimalField(
+        max_digits=4, decimal_places=1, null=True, blank=True, help_text="平均勤続年数（年）"
+    )
+    average_salary = models.IntegerField(null=True, blank=True, help_text="平均年間給与（円）")
+
+    class Meta:
+        verbose_name = "Employee Info"
+
+    def __str__(self):
+        return f"Employees – {self.report}"
+
+
 class CashFlowStatement(models.Model):
     """キャッシュ・フロー計算書. All monetary values in JPY (thousands 千円)."""
 
