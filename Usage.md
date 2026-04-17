@@ -572,16 +572,114 @@ docker compose exec web python manage.py fetch_tdnet_daily --dry-run --verbose
 
 ## Recommended update schedule
 
-| Command | Frequency | Notes |
+### Daily
+
+Run every trading day (weekdays), in this order:
+
+| # | Command | Why this order |
 |---|---|---|
-| `fetch_nse_listings` | Monthly | Catches new NSE listings; safe to re-run (idempotent) |
-| `fetch_fse_listings` | Monthly | Catches new FSE listings; safe to re-run (idempotent) |
-| `fetch_sse_listings` | Monthly | Catches new SSE listings; safe to re-run (idempotent) |
-| `fetch_jpx_listings --skip-detail` | Weekly | Catches new listings and delistings |
-| `fetch_jpx_listings --detail-only` | Weekly | Refreshes representative, address, earnings dates, disclosure links |
-| `fetch_tdnet_daily` | Daily | Same-day disclosure records; TDnet URLs patched to permanent JPX URLs by weekly `fetch_jpx_listings` run |
-| `fetch_jpx_prices` | Daily | Share price and market cap |
-| `sync_edinet_index` | Monthly | Keep EDINETDocument cache current; run `--days 35` for incremental updates |
-| `fetch_shareholders` | Quarterly | After annual report filing season |
-| `fetch_tse --all --year YYYY` | Quarterly | After each earnings season; run for current and prior fiscal year |
-| `fetch_edinet --all --year YYYY` | Annually | After annual report filing season (June–July for March fiscal year companies) |
+| 1 | `fetch_tdnet_daily` | Captures same-day disclosures; no dependencies |
+| 2 | `fetch_jpx_prices` | Prices and market cap; no dependencies |
+
+```bash
+docker compose exec web python manage.py fetch_tdnet_daily
+docker compose exec web python manage.py fetch_jpx_prices
+```
+
+---
+
+### Weekly
+
+Run once a week (e.g. Sunday night), in this order:
+
+| # | Command | Why this order |
+|---|---|---|
+| 1 | `fetch_jpx_listings --skip-detail` | Refreshes the master company list first — catches new listings and delistings before anything else reads the DB |
+| 2 | `fetch_jpx_listings --detail-only` | Enriches company records and overwrites temporary TDnet `pdf_url`s with permanent JPX URLs; must run after step 1 so new companies are already in the DB |
+| 3 | `fetch_jpx_prices` | Catch up on any price gaps from the daily run |
+
+```bash
+docker compose exec web python manage.py fetch_jpx_listings --skip-detail
+docker compose exec web python manage.py fetch_jpx_listings --detail-only
+docker compose exec web python manage.py fetch_jpx_prices
+```
+
+---
+
+### Monthly
+
+Run once a month, in this order:
+
+| # | Command | Why this order |
+|---|---|---|
+| 1 | `fetch_jpx_listings --skip-detail` | Ensure the JPX company list is current before syncing other exchanges |
+| 2 | `fetch_nse_listings` | Add/update NSE listings; dual-listed companies must already exist (from JPX) |
+| 3 | `fetch_fse_listings` | Add/update FSE listings; same reason |
+| 4 | `fetch_sse_listings` | Add/update SSE listings; same reason |
+| 5 | `sync_edinet_index --days 35` | Extend the EDINET document cache to cover the past month |
+
+```bash
+docker compose exec web python manage.py fetch_jpx_listings --skip-detail
+docker compose exec web python manage.py fetch_nse_listings
+docker compose exec web python manage.py fetch_fse_listings
+docker compose exec web python manage.py fetch_sse_listings
+docker compose exec web python manage.py sync_edinet_index --days 35
+```
+
+---
+
+### Quarterly (after each earnings season)
+
+Japanese companies report on roughly the following schedule:
+- **Q1** results: mid-August  
+- **Q2 / half-year** results: mid-November  
+- **Q3** results: mid-February  
+- **Annual** results: mid-May (for March fiscal year companies)
+
+Run after each wave of filings, in this order:
+
+| # | Command | Why this order |
+|---|---|---|
+| 1 | `sync_edinet_index --days 90` | Ensure the EDINET cache covers the full reporting window before fetching financials |
+| 2 | `fetch_tse --all --year YYYY` | Parses quarterly earnings from TDnet disclosures (fast, ~45 days after quarter end) |
+| 3 | `fetch_shareholders` | Parses major shareholders from EDINET annual reports; run after the May annual reporting season |
+
+```bash
+docker compose exec web python manage.py sync_edinet_index --days 90
+docker compose exec web python manage.py fetch_tse --all --year 2026
+docker compose exec web python manage.py fetch_shareholders
+```
+
+`fetch_shareholders` only needs to run once a year (after the annual report filing season, typically June–July for March fiscal year companies).
+
+---
+
+### Annually (after annual report filing season, ~July)
+
+| # | Command | Why this order |
+|---|---|---|
+| 1 | `sync_edinet_index --years 1` | Ensure the full year of EDINET documents is cached |
+| 2 | `fetch_edinet --all --year YYYY` | Parses full annual financial statements (P&L, B/S, CF) from EDINET; richer than TDnet but slower |
+
+```bash
+docker compose exec web python manage.py sync_edinet_index --years 1
+docker compose exec web python manage.py fetch_edinet --all --year 2026
+```
+
+---
+
+### Dependency summary
+
+```
+fetch_jpx_listings (Phase 1)   ← must run before Phase 2 and before regional exchange scrapers
+    └─ fetch_jpx_listings (Phase 2)   ← overwrites TDnet pdf_url with permanent JPX URLs
+    └─ fetch_nse_listings / fetch_fse_listings / fetch_sse_listings
+           └─ fetch_tdnet_daily   ← works on any company already in DB (no ordering constraint)
+
+sync_edinet_index   ← must run before fetch_tse, fetch_shareholders, fetch_edinet
+    └─ fetch_tse
+    └─ fetch_shareholders
+    └─ fetch_edinet
+
+fetch_jpx_prices   ← no dependencies; can run any time after companies exist
+```
