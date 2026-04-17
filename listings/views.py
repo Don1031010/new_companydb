@@ -2,7 +2,7 @@ from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.shortcuts import render, get_object_or_404
 from django.db.models import Q, F
 
-from .models import Company, INDUSTRY_33_CHOICES, MARKET_SEGMENT_CHOICES
+from .models import Company, StockExchange, INDUSTRY_33_CHOICES, MARKET_SEGMENT_CHOICES
 
 DISCLOSURE_BATCH = 20
 
@@ -11,6 +11,7 @@ def company_list(request):
     q = request.GET.get("q", "").strip()
     industry = request.GET.get("industry", "")
     segment = request.GET.get("segment", "")
+    exchange = request.GET.get("exchange", "")
     sort = request.GET.get("sort", "")
 
     companies = Company.objects.prefetch_related("listings__exchange").exclude(
@@ -31,6 +32,9 @@ def company_list(request):
     if segment:
         companies = companies.filter(listings__market_segment=segment, listings__status="active")
 
+    if exchange:
+        companies = companies.filter(listings__exchange__code=exchange, listings__status="active")
+
     if sort == "market_cap_asc":
         companies = companies.order_by(F("market_cap").asc(nulls_last=True))
     elif sort == "market_cap_desc":
@@ -45,11 +49,22 @@ def company_list(request):
     except (EmptyPage, PageNotAnInteger):
         page_obj = paginator.page(1)
 
+    # Label for active exchange filter
+    exchange_label = ""
+    if exchange:
+        try:
+            ex = StockExchange.objects.get(code=exchange)
+            exchange_label = ex.short_name or ex.name_ja
+        except StockExchange.DoesNotExist:
+            pass
+
     return render(request, "listings/company_list.html", {
         "page_obj": page_obj,
         "q": q,
         "industry": industry,
         "segment": segment,
+        "exchange": exchange,
+        "exchange_label": exchange_label,
         "sort": sort,
         "industry_choices": INDUSTRY_33_CHOICES,
         "segment_choices": MARKET_SEGMENT_CHOICES,

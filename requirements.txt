@@ -1,5 +1,5 @@
 Django>=6,<6.1
-wagtail==7.3rc1
+wagtail==7.3.1
 gunicorn>=21.2.0
 psycopg2-binary>=2.9
 django-modelcluster>=6.0       # for ClusterableModel and InlinePanel

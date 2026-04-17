@@ -406,6 +406,118 @@ docker compose exec web python manage.py fetch_nse_listings --dry-run --verbose
 
 ---
 
+## fetch_sse_listings
+
+Scrapes the Sapporo Stock Exchange (札幌証券取引所) listed-company page and upserts
+Company + Listing records. No Playwright required — runs in the `web` container.
+
+```
+docker compose exec web python manage.py fetch_sse_listings [flags]
+```
+
+### What it scrapes
+
+**Phase 1 — List page** (`/listing/list`)
+Collects all 68 companies from `<section id="catXX">` elements:
+  - `cat01`–`cat21`, `cat23` → 本則市場 (`sse_main`), with industry (業種) from the section heading
+  - `cat22` → アンビシャス市場 (`sse_ambitious`)
+  - `cat24` → Sapporo PRO Frontier Market (`sse_frontier`, currently empty)
+
+Companies with `class="tandoku"` on their anchor are 単独上場 (SSE-only, 17 companies)
+and are created with `is_non_jpx=True`. Dual-listed companies get an SSE `Listing` row only.
+
+The 北海道ESGプロボンドマーケット (bond market) does not appear on `/listing/list`
+and requires no filtering.
+
+**Phase 2 — Detail pages** (`--detail` flag, SSE-only companies by default)
+Fetches each company's detail page and extracts `address_ja` and `website`.
+(No fiscal year end, listing date, or representative data is available from SSE.)
+Use `--all` to run Phase 2 for all 68 companies.
+
+SSE market segments: `sse_main` (本則), `sse_ambitious` (アンビシャス),
+`sse_frontier` (Sapporo PRO Frontier Market).
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--detail` | off | Phase 2: scrape detail pages for address/website |
+| `--all` | off | With `--detail`: scrape all SSE companies, not just SSE-only |
+| `--delay N` | 0.5 | Seconds between detail-page requests |
+| `--dry-run` | off | Parse without writing to DB |
+| `--verbose` | off | Show each company as it is processed |
+
+### Common invocations
+
+```bash
+# Phase 1 only — sync company list and listings (~1 second, single HTTP request)
+docker compose exec web python manage.py fetch_sse_listings
+
+# Phase 1 + address/website for SSE-only companies
+docker compose exec web python manage.py fetch_sse_listings --detail
+
+# Preview
+docker compose exec web python manage.py fetch_sse_listings --dry-run --verbose
+```
+
+---
+
+## fetch_fse_listings
+
+Scrapes the Fukuoka Stock Exchange (福岡証券取引所) listed-company pages and upserts
+Company + Listing records. No Playwright required — runs in the `web` container.
+
+```
+docker compose exec web python manage.py fetch_fse_listings [flags]
+```
+
+### What it scrapes
+
+**Step 1 — List page** (`/listed/list.php`)
+Collects all company entries from three sections: 本則 (96), Q-Board (22), and
+Fukuoka PRO Market (16) — 134 companies total. All three sections have detail-page
+links (`detail.php?copid=...`); the page is Shift-JIS encoded.
+
+**Step 2 — Detail pages** (`/listed/detail.php?copid=...`)
+For every company, fetches the detail page and extracts: stock code, company name,
+market section, industry (業種), fiscal year end (決算期 — MMDD or "N月末" format),
+establishment date, address, representative title/name, listing date, shares
+outstanding, and website URL.
+
+- **Dual-listed companies** — adds an FSE `Listing` row; patches blank detail fields.
+- **FSE-only companies** (~32) — creates a new `Company` with `is_non_jpx=True`
+  and an FSE `Listing` row.
+
+FSE disclosure filenames are FSE-specific and do not match TDnet/JPX filenames.
+Disclosures for FSE-listed companies are populated by `fetch_tdnet_daily` instead.
+
+FSE market segments: `fse_main` (本則), `fse_q_board` (Q-Board),
+`fse_pro_market` (Fukuoka PRO Market).
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--skip-existing` | off | Skip companies whose stock code is already in the DB |
+| `--delay N` | 0.5 | Seconds between detail-page requests |
+| `--dry-run` | off | Parse without writing to DB |
+| `--verbose` | off | Show each company as it is processed |
+
+### Common invocations
+
+```bash
+# Full run — all 134 companies (~70 seconds at 0.5s delay)
+docker compose exec web python manage.py fetch_fse_listings
+
+# Preview what would be scraped
+docker compose exec web python manage.py fetch_fse_listings --dry-run --verbose
+
+# Re-run, only updating existing records (skip new companies)
+docker compose exec web python manage.py fetch_fse_listings --skip-existing
+```
+
+---
+
 ## fetch_tdnet_daily
 
 Scrapes the TDnet disclosure feed (東証適時開示情報伝達システム) for new disclosure
@@ -463,6 +575,8 @@ docker compose exec web python manage.py fetch_tdnet_daily --dry-run --verbose
 | Command | Frequency | Notes |
 |---|---|---|
 | `fetch_nse_listings` | Monthly | Catches new NSE listings; safe to re-run (idempotent) |
+| `fetch_fse_listings` | Monthly | Catches new FSE listings; safe to re-run (idempotent) |
+| `fetch_sse_listings` | Monthly | Catches new SSE listings; safe to re-run (idempotent) |
 | `fetch_jpx_listings --skip-detail` | Weekly | Catches new listings and delistings |
 | `fetch_jpx_listings --detail-only` | Weekly | Refreshes representative, address, earnings dates, disclosure links |
 | `fetch_tdnet_daily` | Daily | Same-day disclosure records; TDnet URLs patched to permanent JPX URLs by weekly `fetch_jpx_listings` run |

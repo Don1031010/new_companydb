@@ -43,7 +43,9 @@
         <div class="mt-3 flex flex-wrap gap-1.5">
             {% for listing in company.active_listings %}
             <span class="text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded px-2 py-0.5">
-                {{ listing.exchange.short_name|default:listing.exchange.name_ja }} / {{ listing.get_market_segment_display }}
+                <a href="/companies/?exchange={{ listing.exchange.code }}" class="hover:underline">{{ listing.exchange.short_name|default:listing.exchange.name_ja }}</a>
+                /
+                <a href="/companies/?segment={{ listing.market_segment }}" class="hover:underline">{{ listing.get_market_segment_display }}</a>
             </span>
             {% endfor %}
             {% if company.get_industry_33_display %}
@@ -216,8 +218,20 @@
             <tbody class="divide-y divide-gray-100">
                 {% for listing in all_listings %}
                 <tr>
-                    <td class="px-4 py-3 font-medium text-gray-900">{{ listing.exchange.short_name|default:listing.exchange.name_ja }}</td>
-                    <td class="px-4 py-3 text-gray-700">{{ listing.get_market_segment_display|default:"—" }}</td>
+                    <td class="px-4 py-3 font-medium">
+                        <a href="/companies/?exchange={{ listing.exchange.code }}"
+                           class="text-indigo-600 hover:text-indigo-800 hover:underline">
+                            {{ listing.exchange.short_name|default:listing.exchange.name_ja }}
+                        </a>
+                    </td>
+                    <td class="px-4 py-3">
+                        {% if listing.market_segment %}
+                        <a href="/companies/?segment={{ listing.market_segment }}"
+                           class="text-indigo-600 hover:text-indigo-800 hover:underline">
+                            {{ listing.get_market_segment_display }}
+                        </a>
+                        {% else %}—{% endif %}
+                    </td>
                     <td class="px-4 py-3 text-gray-600 hidden sm:table-cell">{{ listing.listing_date|date:"Y-m-d"|default:"—" }}</td>
                     <td class="px-4 py-3 text-gray-600 hidden sm:table-cell">{{ listing.delisting_date|date:"Y-m-d"|default:"—" }}</td>
                     <td class="px-4 py-3 text-center">

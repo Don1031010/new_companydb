@@ -160,8 +160,9 @@ MARKET_SEGMENT_CHOICES = [
     ("sse_ambitious","アンビシャス（札証）"),
     ("sse_frontier", "Sapporo PRO Frontier"),
     # FSE (福証)
-    ("fse_main",     "本則市場（福証）"),
-    ("fse_q_board",  "Q-Board（福証）"),
+    ("fse_main",      "本則市場（福証）"),
+    ("fse_q_board",   "Q-Board（福証）"),
+    ("fse_pro_market","Fukuoka PRO Market（福証）"),
 ]
 
 LISTING_STATUS_CHOICES = [

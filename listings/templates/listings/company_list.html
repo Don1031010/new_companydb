@@ -32,7 +32,7 @@
             <button type="submit" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors">
                 絞り込む
             </button>
-            {% if q or industry or segment %}
+            {% if q or industry or segment or exchange %}
             <a href="/companies/" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg transition-colors">
                 クリア
             </a>
@@ -44,8 +44,14 @@
 {# ── Results ─────────────────────────────────────────────────────────────── #}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
-    <div class="text-sm text-gray-500 mb-4">
-        {{ total_count }} 件{% if q %} — 「{{ q }}」の検索結果{% endif %}
+    <div class="text-sm text-gray-500 mb-4 flex flex-wrap items-center gap-2">
+        <span>{{ total_count }} 件{% if q %} — 「{{ q }}」の検索結果{% endif %}</span>
+        {% if exchange_label %}
+        <span class="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2.5 py-0.5 text-xs font-medium">
+            {{ exchange_label }}
+            <a href="/companies/{% if q or industry or segment %}?{% if q %}q={{ q }}&{% endif %}{% if industry %}industry={{ industry }}&{% endif %}{% if segment %}segment={{ segment }}{% endif %}{% endif %}" class="ml-0.5 text-blue-400 hover:text-blue-700">✕</a>
+        </span>
+        {% endif %}
     </div>
 
     <div class="bg-white rounded-xl shadow-md overflow-hidden">
@@ -59,17 +65,17 @@
                     <th class="px-4 py-3 text-right hidden lg:table-cell">
                         {# Sort toggle for market cap #}
                         {% if sort == "market_cap_desc" %}
-                        <a href="?{% if q %}q={{ q }}&{% endif %}{% if industry %}industry={{ industry }}&{% endif %}{% if segment %}segment={{ segment }}&{% endif %}sort=market_cap_asc"
+                        <a href="?{% if q %}q={{ q }}&{% endif %}{% if industry %}industry={{ industry }}&{% endif %}{% if segment %}segment={{ segment }}&{% endif %}{% if exchange %}exchange={{ exchange }}&{% endif %}sort=market_cap_asc"
                            class="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800">
                             時価総額（百万円）<span>↓</span>
                         </a>
                         {% elif sort == "market_cap_asc" %}
-                        <a href="?{% if q %}q={{ q }}&{% endif %}{% if industry %}industry={{ industry }}&{% endif %}{% if segment %}segment={{ segment }}&{% endif %}sort=market_cap_desc"
+                        <a href="?{% if q %}q={{ q }}&{% endif %}{% if industry %}industry={{ industry }}&{% endif %}{% if segment %}segment={{ segment }}&{% endif %}{% if exchange %}exchange={{ exchange }}&{% endif %}sort=market_cap_desc"
                            class="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800">
                             時価総額（百万円）<span>↑</span>
                         </a>
                         {% else %}
-                        <a href="?{% if q %}q={{ q }}&{% endif %}{% if industry %}industry={{ industry }}&{% endif %}{% if segment %}segment={{ segment }}&{% endif %}sort=market_cap_desc"
+                        <a href="?{% if q %}q={{ q }}&{% endif %}{% if industry %}industry={{ industry }}&{% endif %}{% if segment %}segment={{ segment }}&{% endif %}{% if exchange %}exchange={{ exchange }}&{% endif %}sort=market_cap_desc"
                            class="inline-flex items-center gap-1 hover:text-indigo-600">
                             時価総額（百万円）<span class="text-gray-300">↕</span>
                         </a>
