@@ -12,6 +12,8 @@ from listings import views as listings_views
 urlpatterns = [
     path("django-admin/", admin.site.urls),
     path("admin/", include(wagtailadmin_urls)),
+    path("accounts/", include("accounts.urls")),
+    path("calendar/", include("cal.urls")),
     path("documents/", include(wagtaildocs_urls)),
     path("search/", search_views.search, name="search"),
     path("companies/", listings_views.company_list, name="company_list"),

@@ -448,7 +448,8 @@ class Command(BaseCommand):
         )
 
         co_updated = 0
-        if not co_created:
+        if not co_created and company.is_non_jpx:
+            # For dual-listed companies, JPX data is authoritative; skip company fields.
             patch = {}
             if not company.name_ja and detail["name_ja"]:
                 patch["name_ja"] = detail["name_ja"]

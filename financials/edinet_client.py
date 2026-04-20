@@ -161,20 +161,39 @@ class EdinetClient:
             )
             return results
 
-        # Cache miss — fall back to brute-force API scan
-        logger.info("Cache miss for %s %d — scanning EDINET API day by day", edinet_code, year)
+        # Cache miss — fall back to scanning only dates not yet covered by sync_edinet_index
+        logger.info("Cache miss for %s %d — checking unsynced dates", edinet_code, year)
         start = date(year, 1, 1)
-        # Never scan past today — future dates have no filings
         end = min(date(year, 12, 31), date.today())
         if start > end:
             logger.info("No dates to scan for %s %d (year is in the future)", edinet_code, year)
             return results
-        current = start
-        # Only weekdays: EDINET has no filings on Sat(5) or Sun(6)
-        scan_days = [(start + timedelta(days=i)) for i in range((end - start).days + 1)
-                     if (start + timedelta(days=i)).weekday() < 5]
+
+        from listings.models import SyncedDate
+        synced = set(
+            SyncedDate.objects.filter(date__gte=start, date__lte=end)
+            .values_list("date", flat=True)
+        )
+        # Only weekdays not yet synced
+        scan_days = [
+            start + timedelta(days=i)
+            for i in range((end - start).days + 1)
+            if (start + timedelta(days=i)).weekday() < 5
+            and (start + timedelta(days=i)) not in synced
+        ]
+        if not scan_days:
+            logger.info(
+                "All dates in %d already synced — no filings for %s in %d",
+                year, edinet_code, year,
+            )
+            return results
+
         total_days = len(scan_days)
         checked = 0
+        logger.info(
+            "Scanning %d unsynced dates in %d for %s",
+            total_days, year, edinet_code,
+        )
 
         for current in scan_days:
             try:

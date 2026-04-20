@@ -13,12 +13,12 @@ Phase 1 — List collection
   - Dual-listed with TSE: adds/updates the NSE Listing row; patches blank fields.
   - NSE-only (~59 companies): creates Company with is_non_jpx=True + NSE Listing.
 
-Phase 2 — Detail scrape (--detail flag, NSE-only companies by default)
-  Calls view.json for each NSE-only company and populates:
-    representative name/title, address, established date, listing date,
-    shares outstanding, margin/lending flags, fiscal_year_end_day.
-  Also upserts recent disclosure records (timely) into DisclosureRecord using
-  pdf_filename as the deduplication key (same filename as TDnet/JPX).
+Phase 2 — Detail scrape (--detail flag, all NSE companies)
+  Calls view.json for every NSE-listed company and populates listing_date.
+  For NSE-only companies also populates: representative name/title, address,
+  established date, shares outstanding, margin/lending flags, fiscal_year_end_day,
+  and upserts DisclosureRecords (timely) using pdf_filename as dedup key.
+  For dual-listed companies only listing_date is updated (JPX data takes priority).
 
 Usage
 -----
@@ -197,15 +197,12 @@ class Command(BaseCommand):
         if options["detail"] or options["detail_only"]:
             self.stdout.write(self.style.MIGRATE_HEADING("\n=== Phase 2: Detail + disclosures ==="))
 
-            if options["all"]:
-                # All companies with an NSE listing
-                companies = list(
-                    Company.objects.filter(listings__exchange=nse)
-                    .prefetch_related("listings")
-                )
-            else:
-                # NSE-only companies
-                companies = list(Company.objects.filter(is_non_jpx=True))
+            # Always include all NSE companies so listing_date is set for dual-listed too.
+            # --all is now a no-op kept for backwards compatibility.
+            companies = list(
+                Company.objects.filter(listings__exchange=nse)
+                .prefetch_related("listings")
+            )
 
             self.stdout.write(f"  {len(companies)} companies to process")
 
@@ -355,33 +352,34 @@ class Command(BaseCommand):
         """
         stock = (data.get("stock") or [{}])[0]
 
-        # ── Company detail fields ─────────────────────────────────────────────
-        patch = {}
-        if rep_name := stock.get("representativeName"):
-            patch["representative_name"] = rep_name
-        if rep_title := stock.get("representativeTitle"):
-            patch["representative_title"] = rep_title
-        if location := stock.get("location"):
-            patch["address_ja"] = location
-        if est := _parse_date(stock.get("buildDate")):
-            patch["established_date"] = est
-        if shares := _parse_shares(stock.get("listedCount")):
-            patch["shares_outstanding"] = shares
-        if stock.get("marginableStock") is not None:
-            patch["is_margin_trading"] = bool(stock["marginableStock"])
-        if stock.get("loanableStock") is not None:
-            patch["is_securities_lending"] = bool(stock["loanableStock"])
-        # fiscal_year_end_day (overwrite with fresh value from detail API)
-        term = stock.get("accountingTerm", "")
-        if term:
-            if fm := _fiscal_month(term):
-                patch["fiscal_year_end_month"] = fm
-            patch["fiscal_year_end_day"] = _fiscal_day(term)
+        # ── Company detail fields (NSE-only companies only) ───────────────────
+        # For dual-listed companies, JPX data is authoritative; only update listing_date.
+        if company.is_non_jpx:
+            patch = {}
+            if rep_name := stock.get("representativeName"):
+                patch["representative_name"] = rep_name
+            if rep_title := stock.get("representativeTitle"):
+                patch["representative_title"] = rep_title
+            if location := stock.get("location"):
+                patch["address_ja"] = location
+            if est := _parse_date(stock.get("buildDate")):
+                patch["established_date"] = est
+            if shares := _parse_shares(stock.get("listedCount")):
+                patch["shares_outstanding"] = shares
+            if stock.get("marginableStock") is not None:
+                patch["is_margin_trading"] = bool(stock["marginableStock"])
+            if stock.get("loanableStock") is not None:
+                patch["is_securities_lending"] = bool(stock["loanableStock"])
+            term = stock.get("accountingTerm", "")
+            if term:
+                if fm := _fiscal_month(term):
+                    patch["fiscal_year_end_month"] = fm
+                patch["fiscal_year_end_day"] = _fiscal_day(term)
 
-        if patch:
-            for f, v in patch.items():
-                setattr(company, f, v)
-            company.save(update_fields=list(patch.keys()))
+            if patch:
+                for f, v in patch.items():
+                    setattr(company, f, v)
+                company.save(update_fields=list(patch.keys()))
 
         # Update NSE listing date
         if listed_date := _parse_date(stock.get("listedDate")):

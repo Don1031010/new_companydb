@@ -4,6 +4,7 @@ gunicorn>=21.2.0
 psycopg2-binary>=2.9
 django-modelcluster>=6.0       # for ClusterableModel and InlinePanel
 requests>=2.32
+holidays>=0.46
 beautifulsoup4>=4.12
 lxml>=5.0
 

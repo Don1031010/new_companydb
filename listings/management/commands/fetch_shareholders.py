@@ -48,7 +48,10 @@ from django.core.management.base import BaseCommand, CommandError
 
 from django.db import models
 from django.db.models import Q
-from listings.models import Company, Shareholder, ShareRecord, EDINETDocument
+from listings.models import (
+    Company, Shareholder, ShareRecord, MajorShareholder,
+    CompanyShareInfo, EDINETDocument, SOURCE_CHOICES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +68,7 @@ ELEM_ADDR = "jpcrp_cor:AddressMajorShareholders"
 ELEM_SHARES = "jpcrp_cor:NumberOfSharesHeld"
 ELEM_RATIO = "jpcrp_cor:ShareholdingRatio"
 ELEM_TREASURY = "jpcrp_cor:TotalNumberOfSharesHeldTreasurySharesEtc"
+ELEM_TOTAL_SHARES = "jpcrp_cor:NumberOfIssuedSharesAsOfFiscalYearEndIssuedSharesTotalNumberOfSharesEtc"
 ELEM_PERIOD_END = "jpdei_cor:CurrentPeriodEndDateDEI"
 
 # Match context like CurrentYearInstant_No3MajorShareholdersMember
@@ -153,10 +157,9 @@ def _build_index_from_db() -> dict:
     Build { edinet_code: {"docID": ..., "period_end": date} } from the
     EDINETDocument table.
 
-    Preference order per company:
-      1. Most recent annual report (form_code 0300xx) — always has shareholder data.
-      2. Most recent semi-annual / quarterly report (0400xx / 043Axx) — fallback
-         when no annual is available in the scanned window.
+    Picks the report with the most recent period_end date across all form types
+    (annual 0300xx, semi-annual 0400xx / 043Axx).  A September semi-annual report
+    will therefore be preferred over the prior March annual report.
     """
     qs = (
         EDINETDocument.objects
@@ -172,29 +175,40 @@ def _build_index_from_db() -> dict:
         .order_by("edinet_code", "-submit_date")
     )
 
-    annuals: dict = {}   # edinet_code -> most recent annual doc entry
-    others: dict = {}    # edinet_code -> most recent non-annual doc entry
+    best: dict = {}  # edinet_code -> best doc entry so far
 
     for doc in qs:
         if not doc.edinet_code:
             continue
         entry = {"docID": doc.doc_id, "period_end": doc.period_end}
-        if doc.form_code.startswith("0300"):
-            annuals.setdefault(doc.edinet_code, entry)
-        else:
-            others.setdefault(doc.edinet_code, entry)
+        existing = best.get(doc.edinet_code)
+        if not existing:
+            best[doc.edinet_code] = entry
+            continue
 
-    # Annual takes priority; fall back to semi-annual/quarterly only when no annual exists
-    return {**others, **annuals}
+        # Prefer the report with the later period_end.
+        # If period_end is equal or missing, prefer annual over semi-annual.
+        new_end = doc.period_end
+        cur_end = existing["period_end"]
+        if new_end and cur_end:
+            if new_end > cur_end:
+                best[doc.edinet_code] = entry
+        elif new_end and not cur_end:
+            best[doc.edinet_code] = entry
+        # If same period_end, keep whichever was already stored (most recent submit_date
+        # wins due to ORDER BY -submit_date above, so first seen = most recently filed)
+
+    return best
 
 
-def _parse_csv(csv_bytes: bytes) -> tuple[list[dict] | None, int | None, date | None]:
+def _parse_csv(csv_bytes: bytes) -> tuple[list[dict] | None, int | None, int | None, date | None]:
     """
     Parse the XBRL-to-CSV file from the EDINET type=5 ZIP.
 
     Returns a tuple of:
       - shareholders: list of {name, address, shares, percentage} sorted by rank,
                       or None if not found.
+      - total_shares: total issued shares from the filing, or None.
       - treasury_shares: total treasury share count (自己株式数), or None.
       - period_end: the actual period end date from the filing (CurrentPeriodEndDateDEI),
                     or None. Use this in preference to the API's periodEnd field, which
@@ -206,7 +220,9 @@ def _parse_csv(csv_bytes: bytes) -> tuple[list[dict] | None, int | None, date | 
     reader = csv.reader(io.StringIO(raw), delimiter="\t")
 
     by_rank: dict[int, dict] = {}
+    total_shares: int | None = None
     treasury_shares: int | None = None
+    _treasury_from_row1 = False
     period_end: date | None = None
 
     for row in reader:
@@ -224,12 +240,31 @@ def _parse_csv(csv_bytes: bytes) -> tuple[list[dict] | None, int | None, date | 
                 pass
             continue
 
-        # Treasury shares: no member suffix = total; accept annual, interim, and quarterly contexts
-        if element == ELEM_TREASURY and context in ("CurrentYearInstant", "InterimInstant", "CurrentQuarterInstant"):
+        # Total shares issued — use the aggregate FilingDateInstant row (no member suffix)
+        if element == ELEM_TOTAL_SHARES and context == "FilingDateInstant" and total_shares is None:
             try:
-                treasury_shares = int(value.replace(",", ""))
+                total_shares = int(value.replace(",", ""))
             except ValueError:
                 pass
+            continue
+
+        # Treasury shares: Row1Member = pure 自己株式; plain context = total incl. cross-holdings.
+        # Prefer Row1Member when present; fall back to plain aggregate only if Row1Member absent.
+        if element == ELEM_TREASURY:
+            _base_ctxs = ("CurrentYearInstant", "InterimInstant", "CurrentQuarterInstant")
+            _is_row1 = any(context == f"{b}_Row1Member" for b in _base_ctxs)
+            _is_total = context in _base_ctxs
+            if _is_row1:
+                try:
+                    treasury_shares = int(value.replace(",", ""))
+                    _treasury_from_row1 = True
+                except ValueError:
+                    pass
+            elif _is_total and not _treasury_from_row1:
+                try:
+                    treasury_shares = int(value.replace(",", ""))
+                except ValueError:
+                    pass
             continue
 
         if "MajorShareholdersMember" not in context:
@@ -272,17 +307,17 @@ def _parse_csv(csv_bytes: bytes) -> tuple[list[dict] | None, int | None, date | 
             "percentage": sh["percentage"],
         })
 
-    return (result or None), treasury_shares, period_end
+    return (result or None), total_shares, treasury_shares, period_end
 
 
 def _fetch_and_parse(
     session: requests.Session, api_key: str, doc_id: str
-) -> tuple[list[dict] | None, int | None, date | None, str | None]:
+) -> tuple[list[dict] | None, int | None, int | None, date | None, str | None]:
     """
     Download the XBRL-to-CSV ZIP for doc_id and parse major shareholders,
-    treasury shares, and period end date.
+    total shares, treasury shares, and period end date.
 
-    Returns (shareholders, treasury_shares, period_end, reason).
+    Returns (shareholders, total_shares, treasury_shares, period_end, reason).
     On success: reason is None.
     On failure: shareholders is None and reason describes what went wrong.
     """
@@ -294,7 +329,7 @@ def _fetch_and_parse(
         )
         resp.raise_for_status()
     except requests.RequestException as e:
-        return None, None, None, f"download error: {e}"
+        return None, None, None, None, f"download error: {e}"
 
     try:
         with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
@@ -307,13 +342,13 @@ def _fetch_and_parse(
             if not csv_files:
                 csv_in_zip = [n for n in all_names if n.endswith(".csv")]
                 detail = ", ".join(csv_in_zip[:6]) if csv_in_zip else "no .csv files in ZIP"
-                return None, None, None, f"no matching CSV — ZIP contains: {detail}"
-            shareholders, treasury_shares, period_end = _parse_csv(zf.read(csv_files[0]))
+                return None, None, None, None, f"no matching CSV — ZIP contains: {detail}"
+            shareholders, total_shares, treasury_shares, period_end = _parse_csv(zf.read(csv_files[0]))
             if not shareholders:
-                return None, treasury_shares, period_end, "CSV parsed but no shareholder rows found"
-            return shareholders, treasury_shares, period_end, None
+                return None, total_shares, treasury_shares, period_end, "CSV parsed but no shareholder rows found"
+            return shareholders, total_shares, treasury_shares, period_end, None
     except zipfile.BadZipFile:
-        return None, None, None, "bad ZIP file"
+        return None, None, None, None, "bad ZIP file"
 
 
 class Command(BaseCommand):
@@ -323,6 +358,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--codes", nargs="+", metavar="CODE",
             help="Only fetch shareholders for these stock codes",
+        )
+        parser.add_argument(
+            "--from-code", metavar="CODE",
+            help="Start from this stock code and continue to the end (inclusive)",
         )
         parser.add_argument(
             "--industry", nargs="+", metavar="INDUSTRY_33",
@@ -348,6 +387,8 @@ class Command(BaseCommand):
         qs = Company.objects.filter(is_non_jpx=False).exclude(edinet_code="")
         if options["codes"]:
             qs = qs.filter(stock_code__in=options["codes"])
+        if options["from_code"]:
+            qs = qs.filter(stock_code__gte=options["from_code"])
         if options["industry"]:
             qs = qs.filter(industry_33__in=options["industry"])
 
@@ -394,36 +435,65 @@ class Command(BaseCommand):
             if i > 1:
                 time.sleep(options["delay"])
 
-            shareholders, treasury_shares, csv_period_end, reason = _fetch_and_parse(session, api_key, entry["docID"])
+            shareholders, total_shares, treasury_shares, csv_period_end, reason = _fetch_and_parse(session, api_key, entry["docID"])
             if not shareholders:
                 self.stdout.write(self.style.ERROR(f"NO DATA — {reason}"))
                 errors += 1
                 continue
 
-            # Update treasury shares on Company if found
-            if treasury_shares is not None:
-                company.treasury_shares = treasury_shares
-                company.save(update_fields=["treasury_shares"])
+            as_of_date = csv_period_end or entry["period_end"]
+            doc_id = entry["docID"]
+            edinet_doc = EDINETDocument.objects.filter(doc_id=doc_id).first()
 
-            # Replace current snapshot
-            company.share_records.all().delete()
+            # Determine source from form_code
+            form_code = edinet_doc.form_code if edinet_doc else ""
+            if form_code.startswith("0300"):
+                source = "edinet_annual"
+            else:
+                source = "edinet_interim"
+
+            # Upsert ShareRecord snapshot
+            snapshot, _ = ShareRecord.objects.update_or_create(
+                company=company,
+                as_of_date=as_of_date,
+                defaults={
+                    "edinet_doc": edinet_doc,
+                    "total_shares": total_shares,
+                    "treasury_shares": treasury_shares,
+                },
+            )
+
+            # Replace MajorShareholder entries for this snapshot
+            snapshot.entries.all().delete()
             for rank, sh in enumerate(shareholders, start=1):
                 shareholder, _ = Shareholder.objects.get_or_create(
                     name=sh["name"],
                     defaults={"address": sh["address"]},
                 )
-                ShareRecord.objects.create(
-                    company=company,
+                MajorShareholder.objects.create(
+                    share_record=snapshot,
                     shareholder=shareholder,
                     rank=rank,
                     shares=sh["shares"],
                     percentage=sh["percentage"],
-                    as_of_date=csv_period_end or entry["period_end"],
+                )
+
+            # Upsert CompanyShareInfo for signal to sync shares_outstanding
+            if total_shares is not None or treasury_shares is not None:
+                CompanyShareInfo.objects.update_or_create(
+                    company=company,
+                    as_of_date=as_of_date,
+                    defaults={
+                        "source": source,
+                        "total_shares": total_shares,
+                        "treasury_shares": treasury_shares,
+                    },
                 )
 
             self.stdout.write(
                 self.style.SUCCESS(
                     f"OK ({len(shareholders)} shareholders"
+                    + (f", 発行済={total_shares:,}" if total_shares else "")
                     + (f", 自己株={treasury_shares:,}" if treasury_shares else "")
                     + ")"
                 )

@@ -306,6 +306,7 @@ class Command(BaseCommand):
                 pending = pending[:options["limit"]]
 
             ok = err = 0
+            failed: list[tuple[str, str]] = []
             for i, entry in enumerate(pending, 1):
                 code4, code5, name = entry["code4"], entry["code5"], entry["name"]
                 self.stdout.write(f"[{i}/{len(pending)}] {code4}  {name}")
@@ -322,13 +323,16 @@ class Command(BaseCommand):
                         ok += 1
                     else:
                         self.stdout.write(self.style.WARNING("  ⚠ no data"))
+                        failed.append((code4, name))
                         err += 1
                 except PWTimeout:
                     self.stdout.write(self.style.ERROR("  ✗ timeout"))
+                    failed.append((code4, name))
                     err += 1
                 except Exception as e:
                     self.stdout.write(self.style.ERROR(f"  ✗ {e}"))
                     logger.exception(f"Error scraping detail for {code4}")
+                    failed.append((code4, name))
                     err += 1
 
             browser.close()
@@ -336,6 +340,10 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             f"\nDone.  ✓ {ok} saved   ✗ {err} failed   total {len(pending)}"
         ))
+        if failed:
+            self.stdout.write(self.style.ERROR("Failed companies:"))
+            for code, name in failed:
+                self.stdout.write(self.style.ERROR(f"  {code}  {name}"))
 
     # ── Screenshot helper ─────────────────────────────────────────────────────
 
@@ -839,7 +847,6 @@ class Command(BaseCommand):
 
         company.is_margin_trading     = data.get("is_margin_trading",     company.is_margin_trading)
         company.is_securities_lending = data.get("is_securities_lending", company.is_securities_lending)
-        company.detail_scraped_at     = timezone.now()
 
         for field, key in [
             ("earnings_date_annual", "earnings_date_annual_text"),
@@ -851,6 +858,9 @@ class Command(BaseCommand):
                 setattr(company, field, d)
 
         company.save()
+        # Set detail_scraped_at via .update() so it lands after auto_now updated_at,
+        # ensuring detail_scraped_at >= updated_at for resume-detection to work correctly.
+        Company.objects.filter(pk=company.pk).update(detail_scraped_at=timezone.now())
 
         # Update listing date on TSE Listing
         if listing_date := parse_date(data.get("listing_date_text", "")):

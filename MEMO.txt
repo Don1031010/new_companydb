@@ -1,0 +1,11 @@
+data sources: EDINET, TDnet, TSE, Shikiho
+TDnet and TSE update disclosure data.
+
+1. EDINET
+  data: PL, BS, CF, 
+  command: fetch_shareholders, fetch_edinet, sync_edinet_index
+
+2. Tansin XBRL
+
+
+

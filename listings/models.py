@@ -319,12 +319,6 @@ class Company(ClusterableModel):
         blank=True,
         verbose_name=_("発行済株式数"),
     )
-    treasury_shares = models.BigIntegerField(
-        null=True,
-        blank=True,
-        verbose_name=_("自己株式数"),
-        help_text=_("EDINETより取得。市場流通株数 = 発行済株式数 − 自己株式数"),
-    )
     share_price = models.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -482,7 +476,6 @@ class Company(ClusterableModel):
         MultiFieldPanel([
             FieldRowPanel([
                 FieldPanel("shares_outstanding"),
-                FieldPanel("treasury_shares"),
                 FieldPanel("unit_shares"),
             ]),
             FieldRowPanel([
@@ -556,12 +549,6 @@ class Company(ClusterableModel):
         if self.shares_outstanding and self.share_price:
             self.market_cap = self.shares_outstanding * self.share_price / 1_000_000
         super().save(*args, **kwargs)
-
-    @property
-    def treasury_shares_pct(self):
-        if self.shares_outstanding and self.treasury_shares:
-            return round(self.treasury_shares / self.shares_outstanding * 100, 1)
-        return None
 
     @property
     def primary_exchange(self):
@@ -711,6 +698,25 @@ class EDINETDocument(models.Model):
 
     def __str__(self):
         return f"{self.doc_id} ({self.edinet_code} {self.submit_date})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SyncedDate — tracks dates fully scanned by sync_edinet_index
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SyncedDate(models.Model):
+    """
+    Records every date that sync_edinet_index has fully scanned.
+    Allows get_docs_for_company to skip the API fallback for already-synced dates.
+    """
+    date = models.DateField(unique=True, db_index=True, verbose_name="スキャン済み日付")
+
+    class Meta:
+        verbose_name = "スキャン済み日付"
+        verbose_name_plural = "スキャン済み日付"
+
+    def __str__(self):
+        return self.date.isoformat()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -882,11 +888,10 @@ class DisclosureRecord(models.Model):
         return f"{self.company.stock_code} {self.disclosed_date} {self.title[:60]}"
 
 
-class ShareRecord(models.Model):
+class ShareRecord(ClusterableModel):
     """
-    One major shareholder's holding in one company (current snapshot).
-    Replacing all records for a company on each scrape gives the latest
-    disclosed top-10 shareholders.
+    One EDINET report snapshot per company. Holds report-level share counts
+    and links to the individual MajorShareholder entries for that report.
     """
     company = ParentalKey(
         Company,
@@ -894,50 +899,142 @@ class ShareRecord(models.Model):
         related_name="share_records",
         verbose_name=_("会社"),
     )
-    shareholder = models.ForeignKey(
-        Shareholder,
-        on_delete=models.PROTECT,
+    edinet_doc = models.ForeignKey(
+        "EDINETDocument",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
         related_name="share_records",
-        verbose_name=_("株主"),
-    )
-    rank = models.PositiveSmallIntegerField(
-        verbose_name=_("順位"),
-        help_text=_("大株主順位（1〜10）"),
-    )
-    shares = models.BigIntegerField(
-        null=True,
-        blank=True,
-        verbose_name=_("保有株数（株）"),
-    )
-    percentage = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        verbose_name=_("持株比率（%）"),
+        verbose_name=_("EDINETドキュメント"),
     )
     as_of_date = models.DateField(
-        null=True,
-        blank=True,
+        null=True, blank=True,
         verbose_name=_("基準日"),
-        help_text=_("株主名簿の基準日（通常は決算期末）"),
+    )
+    total_shares = models.BigIntegerField(
+        null=True, blank=True,
+        verbose_name=_("発行済株式数"),
+    )
+    treasury_shares = models.BigIntegerField(
+        null=True, blank=True,
+        verbose_name=_("自己株式数"),
     )
 
     panels = [
         FieldRowPanel([
-            FieldPanel("rank"),
-            FieldPanel("shareholder"),
+            FieldPanel("as_of_date", read_only=True),
+            FieldPanel("edinet_doc", read_only=True),
         ]),
         FieldRowPanel([
-            FieldPanel("shares"),
-            FieldPanel("percentage"),
-            FieldPanel("as_of_date"),
+            FieldPanel("total_shares", read_only=True),
+            FieldPanel("treasury_shares", read_only=True),
+        ]),
+        InlinePanel("entries", label=_("大株主"), min_num=0),
+    ]
+
+    class Meta:
+        verbose_name = _("株主情報スナップショット")
+        verbose_name_plural = _("株主情報スナップショット")
+        unique_together = [("company", "as_of_date")]
+        ordering = ["company", "-as_of_date"]
+
+    def __str__(self):
+        return f"{self.company.stock_code} {self.as_of_date}"
+
+
+class MajorShareholder(models.Model):
+    """
+    One major shareholder's holding within a ShareRecord snapshot.
+    """
+    share_record = ParentalKey(
+        ShareRecord,
+        on_delete=models.CASCADE,
+        related_name="entries",
+        verbose_name=_("スナップショット"),
+    )
+    shareholder = models.ForeignKey(
+        Shareholder,
+        on_delete=models.PROTECT,
+        related_name="holdings",
+        verbose_name=_("株主"),
+    )
+    rank = models.PositiveSmallIntegerField(verbose_name=_("順位"))
+    shares = models.BigIntegerField(
+        null=True, blank=True,
+        verbose_name=_("保有株数（株）"),
+    )
+    percentage = models.DecimalField(
+        max_digits=5, decimal_places=2,
+        null=True, blank=True,
+        verbose_name=_("持株比率（%）"),
+    )
+
+    panels = [
+        FieldRowPanel([
+            FieldPanel("rank", read_only=True),
+            FieldPanel("shareholder", read_only=True),
+        ]),
+        FieldRowPanel([
+            FieldPanel("shares", read_only=True),
+            FieldPanel("percentage", read_only=True),
         ]),
     ]
 
     class Meta:
-        verbose_name = _("大株主情報")
-        verbose_name_plural = _("大株主情報")
-        unique_together = [("company", "rank")]
-        ordering = ["company", "rank"]
+        verbose_name = _("大株主")
+        verbose_name_plural = _("大株主")
+        unique_together = [("share_record", "rank")]
+        ordering = ["share_record", "rank"]
 
     def __str__(self):
-        return f"{self.company.stock_code} #{self.rank} {self.shareholder.name} ({self.percentage}%)"
+        return f"{self.share_record} #{self.rank} {self.shareholder.name}"
+
+
+SOURCE_CHOICES = [
+    ("tanshin_q1",     "第1四半期決算短信"),
+    ("tanshin_q2",     "第2四半期決算短信"),
+    ("tanshin_q3",     "第3四半期決算短信"),
+    ("tanshin_q4",     "通期決算短信"),
+    ("edinet_interim", "半期報告書（EDINET）"),
+    ("edinet_annual",  "有価証券報告書（EDINET）"),
+]
+
+
+class CompanyShareInfo(models.Model):
+    """
+    Historical share counts per report date, from any quarterly source.
+    The post_save signal on this model keeps Company.shares_outstanding
+    in sync with the latest row.
+    """
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        related_name="share_info",
+        verbose_name=_("会社"),
+    )
+    as_of_date = models.DateField(verbose_name=_("基準日"))
+    source = models.CharField(
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        verbose_name=_("データソース"),
+    )
+    total_shares = models.BigIntegerField(
+        null=True, blank=True,
+        verbose_name=_("発行済株式数"),
+    )
+    treasury_shares = models.BigIntegerField(
+        null=True, blank=True,
+        verbose_name=_("自己株式数"),
+    )
+    average_total_shares = models.BigIntegerField(
+        null=True, blank=True,
+        verbose_name=_("平均発行済株式数"),
+    )
+
+    class Meta:
+        verbose_name = _("株式数推移")
+        verbose_name_plural = _("株式数推移")
+        unique_together = [("company", "as_of_date")]
+        ordering = ["company", "-as_of_date"]
+
+    def __str__(self):
+        return f"{self.company.stock_code} {self.as_of_date} ({self.source})"

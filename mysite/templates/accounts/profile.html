@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}プロフィール — {{ request.user.profile.get_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 py-10">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+        <div class="flex items-center justify-between mb-6">
+            <h1 class="text-2xl font-bold text-gray-900">プロフィール</h1>
+            <a href="{% url 'accounts:profile_edit' %}"
+               class="text-sm bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg transition-colors">
+                編集
+            </a>
+        </div>
+
+        <dl class="divide-y divide-gray-100">
+            <div class="py-3 grid grid-cols-3 gap-4">
+                <dt class="text-sm font-medium text-gray-500">ユーザー名</dt>
+                <dd class="text-sm text-gray-900 col-span-2">{{ request.user.username }}</dd>
+            </div>
+            <div class="py-3 grid grid-cols-3 gap-4">
+                <dt class="text-sm font-medium text-gray-500">表示名</dt>
+                <dd class="text-sm text-gray-900 col-span-2">{{ request.user.profile.display_name|default:"—" }}</dd>
+            </div>
+            <div class="py-3 grid grid-cols-3 gap-4">
+                <dt class="text-sm font-medium text-gray-500">氏名</dt>
+                <dd class="text-sm text-gray-900 col-span-2">
+                    {% if request.user.get_full_name %}{{ request.user.get_full_name }}{% else %}—{% endif %}
+                </dd>
+            </div>
+            <div class="py-3 grid grid-cols-3 gap-4">
+                <dt class="text-sm font-medium text-gray-500">メールアドレス</dt>
+                <dd class="text-sm text-gray-900 col-span-2">{{ request.user.email|default:"—" }}</dd>
+            </div>
+            {% if request.user.profile.bio %}
+            <div class="py-3 grid grid-cols-3 gap-4">
+                <dt class="text-sm font-medium text-gray-500">自己紹介</dt>
+                <dd class="text-sm text-gray-900 col-span-2 whitespace-pre-wrap">{{ request.user.profile.bio }}</dd>
+            </div>
+            {% endif %}
+            <div class="py-3 grid grid-cols-3 gap-4">
+                <dt class="text-sm font-medium text-gray-500">他ユーザーのイベント</dt>
+                <dd class="text-sm text-gray-900 col-span-2">
+                    {% if request.user.profile.show_others_events %}表示する{% else %}表示しない{% endif %}
+                </dd>
+            </div>
+        </dl>
+    </div>
+</div>
+{% endblock %}

@@ -70,7 +70,7 @@ class Command(BaseCommand):
 
         # Update Company records
         updated = skipped = 0
-        for company in Company.objects.filter(is_non_jpx=False):
+        for company in Company.objects.all():
             edinet = edinet_map.get(company.stock_code)
             if not edinet:
                 skipped += 1

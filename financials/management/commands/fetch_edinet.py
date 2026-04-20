@@ -51,14 +51,15 @@ class Command(BaseCommand):
             self.stdout.write(f"Processing {company} ({company.edinet_code})...")
             docs = client.get_docs_for_company(company.edinet_code, year=year)
             if not docs:
-                if verbose:
-                    self.stdout.write(f"  No filings found")
+                self.stdout.write(f"  No filings found")
                 continue
             for doc in docs:
-                if verbose:
-                    self.stdout.write(f"  Doc {doc['docID']} form={doc.get('formCode')} period={doc.get('periodEnd')}")
+                desc = doc.get("docDescription") or doc.get("formCode", "")
+                period = doc.get("periodEnd") or ""
+                self.stdout.write(f"  → {desc}  period={period}  docID={doc['docID']}")
                 report, values = client.fetch_and_store(doc, verbose=verbose)
-                if verbose and report:
-                    self.stdout.write(f"  → report pk={report.pk}, parsed fields: {list(values.keys()) if values else 'none'}")
+                if report:
+                    fields = list(values.keys()) if values else []
+                    self.stdout.write(f"     stored: {len(fields)} fields parsed")
 
         self.stdout.write(self.style.SUCCESS("Done."))

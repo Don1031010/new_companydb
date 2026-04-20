@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize listings_tags %}
 
 {% block title %}{{ company.stock_code }} {{ company.name_ja }}{% endblock %}
 
@@ -85,7 +85,7 @@
                 {% if company.fiscal_year_end_month %}
                 <div>
                     <dt class="text-gray-500">決算期</dt>
-                    <dd class="text-gray-900 font-medium mt-0.5">{{ company.get_fiscal_year_end_month_display }}</dd>
+                    <dd class="text-gray-900 font-medium mt-0.5">{{ company.get_fiscal_year_end_month_display }}{% if company.fiscal_year_end_day %}{{ company.fiscal_year_end_day }}日{% else %}末{% endif %}</dd>
                 </div>
                 {% endif %}
                 {% if company.industry_17 %}
@@ -172,11 +172,11 @@
                     <dd class="text-gray-900 font-medium mt-0.5">{{ company.shares_outstanding|floatformat:0|intcomma }} 株</dd>
                 </div>
                 {% endif %}
-                {% if company.treasury_shares %}
+                {% if latest_snapshot.treasury_shares %}
                 <div>
                     <dt class="text-gray-500">自己株式数</dt>
                     <dd class="text-gray-900 font-medium mt-0.5">
-                        {{ company.treasury_shares|floatformat:0|intcomma }} 株{% if company.treasury_shares_pct %}<span class="text-gray-400 font-normal"> ({{ company.treasury_shares_pct }}%)</span>{% endif %}
+                        {{ latest_snapshot.treasury_shares|floatformat:0|intcomma }} 株{% if treasury_pct %}<span class="text-gray-400 font-normal"> ({{ treasury_pct }}%)</span>{% endif %}
                     </dd>
                 </div>
                 {% endif %}
@@ -286,15 +286,24 @@
     {% endif %}
 
     {# ── Shareholders ─────────────────────────────────────────────────────── #}
-    {% if company.share_records.all %}
+    {% if major_shareholders %}
+    {% if shareholder_toggle_data %}{{ shareholder_toggle_data|json_script:"shareholder-data" }}{% endif %}
     <div class="bg-white rounded-xl shadow-md overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-100">
-            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide">大株主</h2>
-            {% with sr=company.share_records.first %}
-            {% if sr.as_of_date %}
-            <p class="text-xs text-gray-400 mt-1">基準日: {{ sr.as_of_date|date:"Y-m-d" }}</p>
+        <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
+            <div>
+                <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide">大株主</h2>
+                {% if latest_snapshot.as_of_date %}
+                <p class="text-xs text-gray-400 mt-1">
+                    基準日: {{ latest_snapshot.as_of_date|date:"Y-m-d" }}{% if latest_snapshot.total_shares %} &middot; 発行済株式数: {{ latest_snapshot.total_shares|floatformat:0|intcomma }} 株{% endif %}
+                </p>
+                {% endif %}
+            </div>
+            {% if shareholder_toggle_data %}
+            <button id="treasury-toggle"
+                class="shrink-0 text-xs px-3 py-1.5 rounded-full border border-gray-200 bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors">
+                自己株式を含む
+            </button>
             {% endif %}
-            {% endwith %}
         </div>
         <table class="w-full text-sm">
             <thead>
@@ -305,8 +314,8 @@
                     <th class="px-4 py-3 text-right">持株比率</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-gray-100">
-                {% for sr in company.share_records.all %}
+            <tbody id="shareholders-tbody" class="divide-y divide-gray-100">
+                {% for sr in major_shareholders %}
                 <tr class="hover:bg-gray-50 transition-colors">
                     <td class="px-4 py-2.5 text-right text-gray-400 font-mono">{{ sr.rank }}</td>
                     <td class="px-4 py-2.5 text-gray-900">{{ sr.shareholder.name }}</td>
@@ -326,9 +335,218 @@
             </tbody>
         </table>
     </div>
+    {% if shareholder_toggle_data %}
+    <script>
+    (function () {
+        const raw = JSON.parse(document.getElementById('shareholder-data').textContent);
+        const tbody = document.getElementById('shareholders-tbody');
+        const btn   = document.getElementById('treasury-toggle');
+        let withTreasury = false;
+
+        function fmt(n) {
+            return n === null ? '—' : n.toLocaleString('ja-JP');
+        }
+
+        function renderRows() {
+            let rows;
+            if (!withTreasury) {
+                rows = raw.shareholders.map(s => ({
+                    rank: s.rank, name: s.name, shares: s.shares,
+                    pct: s.pct, treasury: false,
+                }));
+            } else {
+                const total = raw.totalShares;
+                const all = raw.shareholders
+                    .filter(s => s.shares !== null)
+                    .map(s => ({ name: s.name, shares: s.shares, treasury: false }));
+                all.push({ name: '自己株式', shares: raw.treasuryShares, treasury: true });
+                all.sort((a, b) => b.shares - a.shares);
+                rows = all.map((e, i) => ({
+                    rank: i + 1, name: e.name, shares: e.shares,
+                    pct: e.shares / total * 100, treasury: e.treasury,
+                }));
+            }
+
+            tbody.innerHTML = rows.map(r => `
+                <tr class="hover:bg-gray-50 transition-colors${r.treasury ? ' bg-amber-50' : ''}">
+                    <td class="px-4 py-2.5 text-right text-gray-400 font-mono">${r.rank}</td>
+                    <td class="px-4 py-2.5 ${r.treasury ? 'text-amber-700 italic' : 'text-gray-900'}">${r.name}</td>
+                    <td class="px-4 py-2.5 text-right text-gray-600 hidden sm:table-cell font-mono">${fmt(r.shares)}</td>
+                    <td class="px-4 py-2.5">
+                        <div class="flex items-center justify-end gap-3">
+                            <div class="w-24 bg-gray-100 rounded-full h-1.5 hidden sm:block shrink-0">
+                                <div class="${r.treasury ? 'bg-amber-400' : 'bg-indigo-400'} h-1.5 rounded-full"
+                                     style="width:${Math.min(r.pct, 100).toFixed(2)}%"></div>
+                            </div>
+                            <span class="inline-block w-14 text-right font-medium ${r.treasury ? 'text-amber-700' : 'text-gray-800'} tabular-nums">
+                                ${r.pct.toFixed(2)}%
+                            </span>
+                        </div>
+                    </td>
+                </tr>`).join('');
+        }
+
+        btn.addEventListener('click', function () {
+            withTreasury = !withTreasury;
+            renderRows();
+            if (withTreasury) {
+                btn.textContent = '自己株式を除く';
+                btn.classList.replace('bg-gray-100', 'bg-amber-100');
+                btn.classList.replace('text-gray-600', 'text-amber-700');
+                btn.classList.replace('border-gray-200', 'border-amber-200');
+            } else {
+                btn.textContent = '自己株式を含む';
+                btn.classList.replace('bg-amber-100', 'bg-gray-100');
+                btn.classList.replace('text-amber-700', 'text-gray-600');
+                btn.classList.replace('border-amber-200', 'border-gray-200');
+            }
+        });
+    })();
+    </script>
+    {% endif %}
     {% endif %}
 
 
+
+    {# ── Financials ───────────────────────────────────────────────────────── #}
+    {% if fin_rows %}
+    {{ fin_rows|json_script:"fin-data" }}
+    <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-100">
+            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide">財務情報 <span class="text-xs font-normal normal-case text-gray-400">（単位：百万円）</span></h2>
+        </div>
+
+        {# Tab buttons #}
+        <div class="flex border-b border-gray-100 px-6">
+            <button class="fin-tab-btn active-tab px-4 py-3 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600" data-tab="pl">損益</button>
+            <button class="fin-tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" data-tab="bs">貸借対照表</button>
+            <button class="fin-tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" data-tab="cf">キャッシュフロー</button>
+        </div>
+
+        <div class="p-6">
+
+        {# ── P&L tab ── #}
+        <div id="fin-tab-pl" class="fin-tab">
+            <canvas id="chart-pl" height="100" class="mb-6"></canvas>
+            <div class="overflow-x-auto">
+            <table class="w-full text-sm text-right">
+                <thead>
+                    <tr class="text-xs text-gray-500 border-b border-gray-200">
+                        <th class="py-2 text-left font-medium text-gray-600 w-40">項目</th>
+                        {% for r in fin_rows %}<th class="py-2 px-2 font-medium">{{ r.label }}</th>{% endfor %}
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">売上高</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.revenue|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">営業利益</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.operating_profit|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">経常利益</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.ordinary_profit|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">純利益</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.net_income|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">EPS（円）</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{% if r.eps is not None %}{{ r.eps|floatformat:2 }}{% else %}—{% endif %}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">ROE（%）</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{% if r.roe is not None %}{{ r.roe|floatformat:1 }}{% else %}—{% endif %}</td>{% endfor %}
+                    </tr>
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        {# ── B/S tab ── #}
+        <div id="fin-tab-bs" class="fin-tab hidden">
+            <canvas id="chart-bs" height="100" class="mb-6"></canvas>
+            <div class="overflow-x-auto">
+            <table class="w-full text-sm text-right">
+                <thead>
+                    <tr class="text-xs text-gray-500 border-b border-gray-200">
+                        <th class="py-2 text-left font-medium text-gray-600 w-40">項目</th>
+                        {% for r in fin_rows %}<th class="py-2 px-2 font-medium">{{ r.label }}</th>{% endfor %}
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">総資産</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.total_assets|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">純資産</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.net_assets|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">有利子負債</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.interest_bearing_debt|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">自己資本比率（%）</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{% if r.equity_ratio is not None %}{{ r.equity_ratio|floatformat:1 }}{% else %}—{% endif %}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">BPS（円）</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{% if r.bps is not None %}{{ r.bps|floatformat:2 }}{% else %}—{% endif %}</td>{% endfor %}
+                    </tr>
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        {# ── CF tab ── #}
+        <div id="fin-tab-cf" class="fin-tab hidden">
+            <canvas id="chart-cf" height="100" class="mb-6"></canvas>
+            <div class="overflow-x-auto">
+            <table class="w-full text-sm text-right">
+                <thead>
+                    <tr class="text-xs text-gray-500 border-b border-gray-200">
+                        <th class="py-2 text-left font-medium text-gray-600 w-40">項目</th>
+                        {% for r in fin_rows %}<th class="py-2 px-2 font-medium">{{ r.label }}</th>{% endfor %}
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">営業CF</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.operating_cf|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">投資CF</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.investing_cf|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">財務CF</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.financing_cf|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">設備投資</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.capex|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">フリーCF</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.fcf|default:"—" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2 text-left text-gray-600">減価償却費</td>
+                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.depreciation|default:"—" }}</td>{% endfor %}
+                    </tr>
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        </div>{# /p-6 #}
+    </div>
+    {% endif %}
 
     {# ── Disclosures ──────────────────────────────────────────────────────── #}
     <div class="bg-white rounded-xl shadow-md overflow-hidden">
@@ -369,6 +587,90 @@
 {% endblock %}
 
 {% block extra_js %}
+{% if fin_rows %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    const fin = JSON.parse(document.getElementById('fin-data').textContent);
+    const labels = fin.map(r => r.label);
+
+    const BAR_OPTS = {
+        responsive: true,
+        plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+        scales: {
+            x: { ticks: { font: { size: 11 } } },
+            y: { ticks: { font: { size: 11 }, callback: v => v.toLocaleString('ja-JP') } },
+        },
+    };
+
+    function nullsafe(arr) {
+        return arr.map(v => v ?? null);
+    }
+
+    // Store chart instances for resize on tab switch
+    const charts = {};
+
+    // P&L chart
+    charts['pl'] = new Chart(document.getElementById('chart-pl'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: '売上高',   data: nullsafe(fin.map(r => r.revenue)),          backgroundColor: '#6366f1' },
+                { label: '営業利益', data: nullsafe(fin.map(r => r.operating_profit)), backgroundColor: '#10b981' },
+                { label: '純利益',   data: nullsafe(fin.map(r => r.net_income)),        backgroundColor: '#f59e0b' },
+            ],
+        },
+        options: BAR_OPTS,
+    });
+
+    // B/S chart
+    charts['bs'] = new Chart(document.getElementById('chart-bs'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: '総資産', data: nullsafe(fin.map(r => r.total_assets)), backgroundColor: '#6366f1' },
+                { label: '純資産', data: nullsafe(fin.map(r => r.net_assets)),   backgroundColor: '#10b981' },
+                { label: '有利子負債', data: nullsafe(fin.map(r => r.interest_bearing_debt)), backgroundColor: '#ef4444' },
+            ],
+        },
+        options: BAR_OPTS,
+    });
+
+    // CF chart
+    charts['cf'] = new Chart(document.getElementById('chart-cf'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: '営業CF', data: nullsafe(fin.map(r => r.operating_cf)), backgroundColor: '#6366f1' },
+                { label: '投資CF', data: nullsafe(fin.map(r => r.investing_cf)), backgroundColor: '#ef4444' },
+                { label: '財務CF', data: nullsafe(fin.map(r => r.financing_cf)), backgroundColor: '#f59e0b' },
+                { label: 'フリーCF', data: nullsafe(fin.map(r => r.fcf)),         backgroundColor: '#10b981' },
+            ],
+        },
+        options: BAR_OPTS,
+    });
+
+    // Tab switching
+    document.querySelectorAll('.fin-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.fin-tab').forEach(t => t.classList.add('hidden'));
+            document.querySelectorAll('.fin-tab-btn').forEach(b => {
+                b.classList.remove('active-tab', 'border-indigo-500', 'text-indigo-600');
+                b.classList.add('border-transparent', 'text-gray-500');
+            });
+            const tab = btn.dataset.tab;
+            document.getElementById('fin-tab-' + tab).classList.remove('hidden');
+            btn.classList.add('active-tab', 'border-indigo-500', 'text-indigo-600');
+            btn.classList.remove('border-transparent', 'text-gray-500');
+            if (charts[tab]) charts[tab].resize();
+        });
+    });
+})();
+</script>
+{% endif %}
 <script>
 (function () {
     const btn = document.getElementById('show-more-btn');

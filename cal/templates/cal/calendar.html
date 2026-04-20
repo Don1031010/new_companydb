@@ -1,0 +1,450 @@
+{% extends "base.html" %}
+
+{% block title %}カレンダー{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
+<style>
+  /* Modal */
+  #cal-modal { display: none; position: fixed; inset: 0; z-index: 50; align-items: center; justify-content: center; background: rgba(0,0,0,0.4); }
+  #cal-modal.open { display: flex; }
+  #cal-modal > div { width: calc(100% - 2rem); max-width: 28rem; }
+
+  /* FullCalendar tweaks */
+  .fc .fc-toolbar-title { font-size: 1.1rem; font-weight: 700; }
+  .fc .fc-button { background: #6366f1; border-color: #6366f1; }
+  .fc .fc-button:hover { background: #4f46e5; border-color: #4f46e5; }
+  .fc .fc-button-active { background: #4338ca !important; border-color: #4338ca !important; }
+  .fc-daygrid-event { cursor: pointer; }
+
+  /* Memo events */
+  .memo-event { border-left: 3px solid #d4a574 !important; }
+
+  /* Others' public events — muted */
+  .others-event { opacity: 0.65; }
+
+  /* Text-only holiday events (CN, US) */
+  .holiday-text { background: transparent !important; border: none !important; box-shadow: none !important; }
+  .holiday-text .fc-event-main { font-size: 0.7rem; font-weight: 600; padding: 0 2px; }
+  .holiday-cn .fc-event-main { color: #f59e0b !important; }
+  .holiday-us .fc-event-main { color: #3b82f6 !important; }
+
+  /* Search panel */
+  #search-panel { display: none; }
+  #search-panel.open { display: flex; }
+
+  /* Legend */
+  .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+  {# ── Toolbar ─────────────────────────────────────────────────────────── #}
+  <div class="flex items-center justify-between mb-4 mt-6">
+    <h1 class="text-2xl font-bold text-gray-900">カレンダー</h1>
+    <div class="flex items-center gap-4 text-xs text-gray-500">
+      <span><span class="legend-dot mr-1" style="background:#ef4444"></span>日本</span>
+      <span><span class="legend-dot mr-1" style="background:#f59e0b"></span>中国</span>
+      <span><span class="legend-dot mr-1" style="background:#3b82f6"></span>米国</span>
+      <button id="btn-search"
+              class="bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+              title="検索">
+        🔍 検索
+      </button>
+      <button id="btn-new-event"
+              class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+        ＋ イベント追加
+      </button>
+    </div>
+  </div>
+
+  {# ── Main area: calendar + search panel ───────────────────────────────── #}
+  <div class="flex gap-4 items-start">
+
+    {# Calendar #}
+    <div class="flex-1 bg-white rounded-2xl shadow-sm border border-gray-200 p-4 min-w-0">
+      <div id="calendar"></div>
+    </div>
+
+    {# Search panel #}
+    <div id="search-panel" class="flex-col w-80 bg-white rounded-2xl shadow-sm border border-gray-200 p-4 shrink-0">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-sm font-semibold text-gray-700">🔍 検索</span>
+        <button id="search-close" class="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+      </div>
+
+      {# Search input #}
+      <input id="search-input" type="text" placeholder="キーワードを入力..."
+             class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 mb-3">
+
+      {# Type filter #}
+      <div class="flex gap-2 mb-3">
+        {% for val, label in search_types %}
+        <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+          <input type="radio" name="search-type" value="{{ val }}"
+                 class="text-indigo-600" {% if val == "all" %}checked{% endif %}>
+          {{ label }}
+        </label>
+        {% endfor %}
+      </div>
+
+      {# Results #}
+      <div id="search-results" class="space-y-2 overflow-y-auto max-h-[60vh]">
+        <p class="text-xs text-gray-400 text-center py-4">キーワードを入力してください</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{# ── Modal ────────────────────────────────────────────────────────────── #}
+<div id="cal-modal" class="fixed inset-0 z-50 items-center justify-center bg-black/40">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <h2 id="modal-title" class="text-lg font-semibold text-gray-900">イベント</h2>
+      <button id="modal-close" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+    </div>
+    <div id="modal-body" class="px-6 py-4">
+      {# Filled dynamically #}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+<script>
+const CSRF = "{{ csrf_token }}";
+const URL_EVENTS   = "{% url 'cal:events_json' %}";
+const URL_CREATE   = "{% url 'cal:event_create' %}";
+const URL_EDIT_BASE = "/calendar/events/";  // + pk + /
+
+// ── Modal helpers ──────────────────────────────────────────────────────────
+const modal      = document.getElementById("cal-modal");
+const modalTitle = document.getElementById("modal-title");
+const modalBody  = document.getElementById("modal-body");
+
+function openModal(title, html) {
+  modalTitle.textContent = title;
+  modalBody.innerHTML = html;
+  modal.classList.add("open");
+}
+function closeModal() { modal.classList.remove("open"); }
+
+document.getElementById("modal-close").addEventListener("click", closeModal);
+modal.addEventListener("click", e => { if (e.target === modal) closeModal(); });
+
+// ── Form HTML builder ──────────────────────────────────────────────────────
+const COLOR_OPTIONS = [
+  ["#6366f1","インディゴ"],["#10b981","グリーン"],["#f59e0b","アンバー"],
+  ["#ef4444","レッド"],["#8b5cf6","パープル"],["#ec4899","ピンク"],
+  ["#06b6d4","シアン"],["#64748b","グレー"],
+];
+
+function colorOptionsHtml(selected) {
+  return COLOR_OPTIONS.map(([v, l]) =>
+    `<option value="${v}" ${selected === v ? "selected" : ""}>${l}</option>`
+  ).join("");
+}
+
+function fieldCls() {
+  return "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400";
+}
+
+function buildForm(ev = {}) {
+  const isMemo  = !!ev.is_memo;
+  const start   = ev.start ? ev.start.slice(0, 16) : "";
+  const end     = ev.end   ? ev.end.slice(0, 16)   : "";
+  const dateVal = start ? start.slice(0, 10) : "";
+  return `
+    <form id="event-form" class="space-y-3">
+      <div class="flex items-center justify-between pb-1 border-b border-gray-100">
+        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input type="checkbox" name="is_memo" id="is_memo" class="rounded border-gray-300 text-amber-600"
+                 ${isMemo ? "checked" : ""}>
+          📝 メモ / 日記
+        </label>
+        <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+          <input type="checkbox" name="is_public" id="is_public" class="rounded border-gray-300 text-indigo-600"
+                 ${ev.is_public === undefined ? (!isMemo ? "checked" : "") : (ev.is_public ? "checked" : "")}>
+          🌐 公開
+        </label>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1">タイトル</label>
+        <input name="title" value="${ev.title || ""}" required
+               class="${fieldCls()}" placeholder="${isMemo ? "タイトル" : "イベント名"}">
+      </div>
+
+      <div id="time-fields" ${isMemo ? 'class="hidden"' : ""}>
+        <div class="flex items-center gap-2 mb-2">
+          <input type="checkbox" name="all_day" id="all_day" class="rounded border-gray-300" ${ev.allDay ? "checked" : ""}>
+          <label for="all_day" class="text-sm text-gray-700">終日</label>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">開始</label>
+            <input type="datetime-local" name="start" value="${start}" class="${fieldCls()}">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">終了</label>
+            <input type="datetime-local" name="end" value="${end}" class="${fieldCls()}">
+          </div>
+        </div>
+      </div>
+
+      <div id="date-field" ${isMemo ? "" : 'class="hidden"'}>
+        <label class="block text-xs font-medium text-gray-600 mb-1">日付</label>
+        <input type="date" name="memo_date" value="${dateVal}" class="${fieldCls()}">
+      </div>
+
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1" id="desc-label">
+          ${isMemo ? "内容" : "メモ"}
+        </label>
+        <textarea name="description" id="description" rows="${isMemo ? 8 : 2}"
+                  class="${fieldCls()}">${ev.description || ""}</textarea>
+      </div>
+      <div id="color-field" ${isMemo ? 'class="hidden"' : ""}>
+        <label class="block text-xs font-medium text-gray-600 mb-1">色</label>
+        <select name="color" class="${fieldCls()}">${colorOptionsHtml(ev.color || "#6366f1")}</select>
+      </div>
+      <div class="flex gap-2 pt-2">
+        <button type="submit"
+                class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+          保存
+        </button>
+        ${ev.id ? `
+        <button type="button" id="btn-delete"
+                class="bg-red-50 hover:bg-red-100 text-red-600 text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+          削除
+        </button>` : ""}
+      </div>
+    </form>`;
+}
+
+// ── Read-only view for others' events ─────────────────────────────────────
+function buildReadOnly(ev) {
+  const icon  = ev.extendedProps.is_memo ? "📝" : "📅";
+  const title = ev.title.replace(/^(🔒\s*)?(📝\s*)?/, "").replace(/\s*\(@\w+\)\s*$/, "");
+  const desc  = ev.extendedProps.description || "";
+  const date  = ev.startStr ? ev.startStr.slice(0, 10) : "";
+  return `
+    <div class="space-y-3 text-sm text-gray-700">
+      <div class="flex items-center gap-2 text-xs text-gray-400 border-b border-gray-100 pb-2">
+        <span>${icon}</span>
+        <span>@${ev.extendedProps.owner}</span>
+        <span>·</span>
+        <span>${date}</span>
+        <span class="ml-auto">🌐 公開</span>
+      </div>
+      <p class="font-medium text-base text-gray-900">${title}</p>
+      ${desc ? `<p class="text-gray-600 whitespace-pre-wrap text-sm">${desc}</p>` : ""}
+    </div>`;
+}
+
+// ── Submit handler ─────────────────────────────────────────────────────────
+function attachFormHandlers(eventId, calendar) {
+  const form = document.getElementById("event-form");
+  if (!form) return;
+
+  // Toggle memo mode
+  const isMemoChk  = form.querySelector('[name=is_memo]');
+  const timeFields = document.getElementById("time-fields");
+  const dateField  = document.getElementById("date-field");
+  const colorField = document.getElementById("color-field");
+  const descTA     = document.getElementById("description");
+  const descLabel  = document.getElementById("desc-label");
+
+  const isPublicChk = form.querySelector('[name=is_public]');
+
+  function applyMemoMode(memo) {
+    timeFields.classList.toggle("hidden", memo);
+    dateField.classList.toggle("hidden", !memo);
+    colorField.classList.toggle("hidden", memo);
+    descTA.rows = memo ? 8 : 2;
+    descLabel.textContent = memo ? "内容" : "メモ";
+    // For new events only, flip the public default
+    if (!eventId) isPublicChk.checked = !memo;
+  }
+  isMemoChk.addEventListener("change", () => applyMemoMode(isMemoChk.checked));
+
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    const fd = new FormData(form);
+
+    // For memos, build start from memo_date; clear end
+    if (isMemoChk.checked) {
+      const d = fd.get("memo_date") || new Date().toISOString().slice(0, 10);
+      fd.set("start", `${d}T00:00`);
+      fd.delete("end");
+      fd.set("all_day", "on");
+    } else {
+      if (!form.querySelector('[name=all_day]').checked) fd.delete("all_day");
+    }
+    fd.delete("memo_date");
+    fd.append("csrfmiddlewaretoken", CSRF);
+
+    const url = eventId ? `${URL_EDIT_BASE}${eventId}/` : URL_CREATE;
+    const res = await fetch(url, { method: "POST", body: fd,
+                                    headers: {"X-Requested-With": "XMLHttpRequest"} });
+    if (res.ok) { closeModal(); calendar.refetchEvents(); }
+  });
+
+  const delBtn = document.getElementById("btn-delete");
+  if (delBtn) {
+    delBtn.addEventListener("click", async () => {
+      if (!confirm("このイベントを削除しますか？")) return;
+      const fd = new FormData();
+      fd.append("csrfmiddlewaretoken", CSRF);
+      fd.append("delete", "1");
+      const res = await fetch(`${URL_EDIT_BASE}${eventId}/`, {
+        method: "POST", body: fd,
+        headers: {"X-Requested-With": "XMLHttpRequest"},
+      });
+      if (res.ok) { closeModal(); calendar.refetchEvents(); }
+    });
+  }
+}
+
+// ── FullCalendar init ──────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  const calendar = new FullCalendar.Calendar(document.getElementById("calendar"), {
+    locale: "ja",
+    initialView: "dayGridMonth",
+    headerToolbar: {
+      left: "prev,next today",
+      center: "title",
+      right: "dayGridMonth,timeGridWeek,listMonth",
+    },
+    height: "auto",
+    eventSources: [{
+      url: URL_EVENTS,
+      method: "GET",
+      extraParams: () => ({}),
+      failure: () => console.warn("Failed to load events"),
+    }],
+
+    // Click on a day → open create modal
+    dateClick(info) {
+      openModal("イベント追加", buildForm({
+        start: info.dateStr + "T09:00",
+        end:   info.dateStr + "T10:00",
+        memo_date: info.dateStr,
+      }));
+      // pre-fill the date field
+      const df = document.querySelector('[name=memo_date]');
+      if (df) df.value = info.dateStr;
+      attachFormHandlers(null, calendar);
+    },
+
+    // Click on an event → read-only for others, edit for own
+    eventClick(info) {
+      if (info.event.extendedProps.type === "holiday") return;
+      const ev = info.event;
+      const props = ev.extendedProps;
+
+      if (!props.is_own) {
+        openModal(props.is_memo ? "メモ（他のユーザー）" : "イベント（他のユーザー）", buildReadOnly(ev));
+        return;
+      }
+
+      const isMemo = props.is_memo;
+      const cleanTitle = ev.title.replace(/^🔒\s*/, "").replace(/^📝\s*/, "");
+      openModal(isMemo ? "メモ編集" : "イベント編集", buildForm({
+        id: ev.id,
+        title: cleanTitle,
+        start: ev.startStr,
+        end: ev.endStr || "",
+        allDay: ev.allDay,
+        description: props.description || "",
+        color: ev.backgroundColor,
+        is_memo: isMemo,
+        is_public: props.is_public,
+      }));
+      attachFormHandlers(ev.id, calendar);
+    },
+  });
+
+  calendar.render();
+
+  // "＋ イベント追加" toolbar button
+  document.getElementById("btn-new-event").addEventListener("click", () => {
+    openModal("イベント追加", buildForm({}));
+    attachFormHandlers(null, calendar);
+  });
+
+  // ── Search panel ────────────────────────────────────────────────────────
+  const searchPanel  = document.getElementById("search-panel");
+  const searchInput  = document.getElementById("search-input");
+  const searchResults = document.getElementById("search-results");
+  const URL_SEARCH   = "{% url 'cal:search_events' %}";
+
+  document.getElementById("btn-search").addEventListener("click", () => {
+    searchPanel.classList.toggle("open");
+    if (searchPanel.classList.contains("open")) searchInput.focus();
+  });
+  document.getElementById("search-close").addEventListener("click", () => {
+    searchPanel.classList.remove("open");
+  });
+
+  function renderResults(items, q) {
+    if (!items.length) {
+      searchResults.innerHTML = `<p class="text-xs text-gray-400 text-center py-4">「${q}」に一致する結果はありません</p>`;
+      return;
+    }
+    searchResults.innerHTML = items.map(r => {
+      const icon    = r.is_memo ? "📝" : "📅";
+      const privacy = r.is_own ? (r.is_public ? "" : " 🔒") : ` <span class='text-gray-400'>@${r.owner}</span>`;
+      const excerpt = r.excerpt
+        ? `<p class="text-xs text-gray-400 mt-0.5 line-clamp-2">${r.excerpt}</p>`
+        : "";
+      return `
+        <div class="search-result p-2 rounded-lg hover:bg-gray-50 cursor-pointer border border-transparent hover:border-gray-200 transition-colors ${r.is_own ? "" : "opacity-70"}"
+             data-date="${r.date}" data-id="${r.id}">
+          <div class="flex items-start gap-1.5">
+            <span class="text-sm mt-0.5">${icon}</span>
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-gray-800 truncate">${r.title}${privacy}</p>
+              <p class="text-xs text-gray-500">${r.date}</p>
+              ${excerpt}
+            </div>
+          </div>
+        </div>`;
+    }).join("");
+
+    searchResults.querySelectorAll(".search-result").forEach(el => {
+      el.addEventListener("click", () => {
+        calendar.gotoDate(el.dataset.date);
+        // briefly highlight the matching event on the calendar
+        calendar.refetchEvents();
+        searchPanel.classList.remove("open");
+      });
+    });
+  }
+
+  let searchTimer;
+  function doSearch() {
+    const q    = searchInput.value.trim();
+    const type = document.querySelector('[name=search-type]:checked')?.value || "all";
+    if (!q) {
+      searchResults.innerHTML = `<p class="text-xs text-gray-400 text-center py-4">キーワードを入力してください</p>`;
+      return;
+    }
+    fetch(`${URL_SEARCH}?q=${encodeURIComponent(q)}&type=${type}`)
+      .then(r => r.json())
+      .then(data => renderResults(data, q));
+  }
+
+  searchInput.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(doSearch, 300);
+  });
+  document.querySelectorAll('[name=search-type]').forEach(radio => {
+    radio.addEventListener("change", doSearch);
+  });
+});
+</script>
+{% endblock %}

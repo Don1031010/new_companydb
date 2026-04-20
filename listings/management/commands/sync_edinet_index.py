@@ -22,7 +22,7 @@ from datetime import date, timedelta
 from django.core.management.base import BaseCommand
 
 from financials.edinet_client import EdinetClient
-from listings.models import Company, EDINETDocument
+from listings.models import Company, EDINETDocument, SyncedDate
 
 # Form codes worth caching (financial reports + shareholder reports)
 FORM_CODES = {
@@ -69,9 +69,8 @@ class Command(BaseCommand):
         # Build set of dates already synced (skip unless --force)
         if not options["force"]:
             synced_dates = set(
-                EDINETDocument.objects.filter(submit_date__gte=start)
-                .values_list("submit_date", flat=True)
-                .distinct()
+                SyncedDate.objects.filter(date__gte=start)
+                .values_list("date", flat=True)
             )
             self.stdout.write(f"Already-synced dates in range: {len(synced_dates)}")
         else:
@@ -138,7 +137,9 @@ class Command(BaseCommand):
                 else:
                     skipped += 1
 
-            if i % 50 == 0 or i == total:
+            SyncedDate.objects.get_or_create(date=current)
+
+            if i % 10 == 0 or i == total:
                 self.stdout.write(
                     f"  {i}/{total} dates scanned  "
                     f"({stored} new, {skipped} updated)  last: {current}"
