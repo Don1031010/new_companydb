@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 
 from .forms import EventForm
 from .models import COUNTRY_COLORS, Event, Holiday
@@ -52,7 +53,7 @@ def events_json(request):
             return {
                 "id": ev.pk,
                 "title": f"{lock}📝 {ev.title}{owner_label}",
-                "start": ev.start.date().isoformat(),
+                "start": timezone.localtime(ev.start).date().isoformat(),
                 "allDay": True,
                 "backgroundColor": ev.color or ("#f5f0e8" if is_own else "#f3f4f6"),
                 "borderColor": ev.color or ("#d4a574" if is_own else "#d1d5db"),
@@ -156,7 +157,7 @@ def search_events(request):
         results.append({
             "id": ev.pk,
             "title": ev.title,
-            "date": ev.start.date().isoformat(),
+            "date": timezone.localtime(ev.start).date().isoformat(),
             "is_memo": ev.is_memo,
             "is_own": is_own,
             "owner": ev.user.username,
@@ -183,6 +184,8 @@ def event_create(request):
             if request.headers.get("x-requested-with") == "XMLHttpRequest":
                 return JsonResponse({"ok": True, "id": event.pk})
             return redirect("cal:calendar")
+        elif request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JsonResponse({"ok": False, "errors": form.errors}, status=400)
     else:
         form = EventForm(initial=initial)
 
@@ -207,6 +210,8 @@ def event_edit(request, pk):
             if request.headers.get("x-requested-with") == "XMLHttpRequest":
                 return JsonResponse({"ok": True, "id": event.pk})
             return redirect("cal:calendar")
+        elif request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JsonResponse({"ok": False, "errors": form.errors}, status=400)
     else:
         form = EventForm(instance=event)
 

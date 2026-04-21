@@ -136,6 +136,7 @@ function closeModal() { modal.classList.remove("open"); }
 document.getElementById("modal-close").addEventListener("click", closeModal);
 modal.addEventListener("click", e => { if (e.target === modal) closeModal(); });
 
+
 // ── Form HTML builder ──────────────────────────────────────────────────────
 const COLOR_OPTIONS = [
   ["#6366f1","インディゴ"],["#10b981","グリーン"],["#f59e0b","アンバー"],
@@ -143,20 +144,32 @@ const COLOR_OPTIONS = [
   ["#06b6d4","シアン"],["#64748b","グレー"],
 ];
 
-function colorOptionsHtml(selected) {
-  return COLOR_OPTIONS.map(([v, l]) =>
-    `<option value="${v}" ${selected === v ? "selected" : ""}>${l}</option>`
-  ).join("");
+function colorSwatchesHtml(selected) {
+  const swatches = COLOR_OPTIONS.map(([v, l]) => {
+    const sel = selected === v;
+    return `<button type="button" data-color="${v}" title="${l}"
+      class="color-swatch w-7 h-7 rounded-full cursor-pointer transition-transform hover:scale-110"
+      style="background:${v};${sel
+        ? "box-shadow:0 0 0 2px #fff,0 0 0 4px #374151;transform:scale(1.15)"
+        : "box-shadow:0 0 0 1px rgba(0,0,0,0.18)"}"></button>`;
+  }).join("");
+  return `<div class="flex gap-2 flex-wrap">${swatches}</div>
+          <input type="hidden" name="color" value="${selected || "#6366f1"}">`;
 }
 
 function fieldCls() {
   return "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400";
 }
 
+function toDatetimeLocal(s) {
+  if (!s) return "";
+  return s.includes("T") ? s.slice(0, 16) : s + "T00:00";
+}
+
 function buildForm(ev = {}) {
   const isMemo  = !!ev.is_memo;
-  const start   = ev.start ? ev.start.slice(0, 16) : "";
-  const end     = ev.end   ? ev.end.slice(0, 16)   : "";
+  const start   = toDatetimeLocal(ev.start);
+  const end     = toDatetimeLocal(ev.end);
   const dateVal = start ? start.slice(0, 10) : "";
   return `
     <form id="event-form" class="space-y-3">
@@ -207,9 +220,9 @@ function buildForm(ev = {}) {
         <textarea name="description" id="description" rows="${isMemo ? 8 : 2}"
                   class="${fieldCls()}">${ev.description || ""}</textarea>
       </div>
-      <div id="color-field" ${isMemo ? 'class="hidden"' : ""}>
+      <div id="color-field">
         <label class="block text-xs font-medium text-gray-600 mb-1">色</label>
-        <select name="color" class="${fieldCls()}">${colorOptionsHtml(ev.color || "#6366f1")}</select>
+        ${colorSwatchesHtml(ev.color || "#6366f1")}
       </div>
       <div class="flex gap-2 pt-2">
         <button type="submit"
@@ -254,16 +267,29 @@ function attachFormHandlers(eventId, calendar) {
   const isMemoChk  = form.querySelector('[name=is_memo]');
   const timeFields = document.getElementById("time-fields");
   const dateField  = document.getElementById("date-field");
-  const colorField = document.getElementById("color-field");
   const descTA     = document.getElementById("description");
   const descLabel  = document.getElementById("desc-label");
 
   const isPublicChk = form.querySelector('[name=is_public]');
 
+  // Color swatch selection
+  const colorHidden = form.querySelector('[name=color]');
+  form.querySelectorAll('.color-swatch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      form.querySelectorAll('.color-swatch').forEach(b => {
+        b.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.18)';
+        b.style.transform = '';
+      });
+      btn.style.boxShadow = '0 0 0 2px #fff, 0 0 0 4px #374151';
+      btn.style.transform = 'scale(1.15)';
+      colorHidden.value = btn.dataset.color;
+    });
+  });
+
   function applyMemoMode(memo) {
     timeFields.classList.toggle("hidden", memo);
     dateField.classList.toggle("hidden", !memo);
-    colorField.classList.toggle("hidden", memo);
+
     descTA.rows = memo ? 8 : 2;
     descLabel.textContent = memo ? "内容" : "メモ";
     // For new events only, flip the public default
@@ -282,7 +308,10 @@ function attachFormHandlers(eventId, calendar) {
       fd.delete("end");
       fd.set("all_day", "on");
     } else {
-      if (!form.querySelector('[name=all_day]').checked) fd.delete("all_day");
+      const allDayChecked = form.querySelector('[name=all_day]').checked;
+      if (!allDayChecked) {
+        fd.delete("all_day");
+      }
     }
     fd.delete("memo_date");
     fd.append("csrfmiddlewaretoken", CSRF);
@@ -290,7 +319,14 @@ function attachFormHandlers(eventId, calendar) {
     const url = eventId ? `${URL_EDIT_BASE}${eventId}/` : URL_CREATE;
     const res = await fetch(url, { method: "POST", body: fd,
                                     headers: {"X-Requested-With": "XMLHttpRequest"} });
-    if (res.ok) { closeModal(); calendar.refetchEvents(); }
+    if (res.ok) {
+      closeModal();
+      calendar.refetchEvents();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      console.error("Event save failed:", data.errors || res.status);
+      alert("保存に失敗しました: " + JSON.stringify(data.errors || res.status));
+    }
   });
 
   const delBtn = document.getElementById("btn-delete");

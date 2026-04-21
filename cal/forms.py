@@ -13,41 +13,58 @@ COLOR_CHOICES = [
     ("#64748b", "グレー"),
 ]
 
+_cb_cls = "rounded border-gray-300"
+_field_cls = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+
 
 class EventForm(forms.ModelForm):
     color = forms.ChoiceField(
         choices=COLOR_CHOICES,
         required=False,
         label="色",
-        widget=forms.Select(attrs={"class": "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"}),
+        widget=forms.Select(attrs={"class": _field_cls}),
+    )
+    # Explicit BooleanFields so required=False is enforced regardless of model blank setting.
+    all_day = forms.BooleanField(
+        required=False,
+        label="終日",
+        widget=forms.CheckboxInput(attrs={"class": _cb_cls + " text-indigo-600"}),
+    )
+    is_memo = forms.BooleanField(
+        required=False,
+        label="メモ/日記",
+        widget=forms.CheckboxInput(attrs={"class": _cb_cls + " text-amber-600"}),
+    )
+    is_public = forms.BooleanField(
+        required=False,
+        label="公開",
+        widget=forms.CheckboxInput(attrs={"class": _cb_cls + " text-indigo-600"}),
     )
 
     class Meta:
         model = Event
-        fields = ["title", "start", "end", "all_day", "description", "color"]
+        fields = ["title", "start", "end", "all_day", "is_memo", "is_public", "description", "color"]
         labels = {
             "title": "タイトル",
             "start": "開始",
             "end": "終了",
-            "all_day": "終日",
             "description": "メモ",
         }
         widgets = {
             "title": forms.TextInput(attrs={
-                "class": "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm",
+                "class": _field_cls,
                 "placeholder": "イベント名",
             }),
             "start": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={
                 "type": "datetime-local",
-                "class": "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm",
+                "class": _field_cls,
             }),
             "end": forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={
                 "type": "datetime-local",
-                "class": "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm",
+                "class": _field_cls,
             }),
-            "all_day": forms.CheckboxInput(attrs={"class": "rounded border-gray-300 text-indigo-600"}),
             "description": forms.Textarea(attrs={
-                "class": "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm",
+                "class": _field_cls,
                 "rows": 3,
             }),
         }
