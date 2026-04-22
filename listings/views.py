@@ -3,6 +3,8 @@ from django.shortcuts import render, get_object_or_404
 from django.db import models
 from django.db.models import Q, F
 
+from financials.models import ForecastRecord, DividendForecast, BalanceSheet
+
 from .models import Company, StockExchange, INDUSTRY_33_CHOICES, MARKET_SEGMENT_CHOICES
 
 DISCLOSURE_BATCH = 20
@@ -123,31 +125,44 @@ def company_detail(request, stock_code):
     )
     annual_reports.reverse()
 
-    def _v(val, divisor=1_000_000):
-        """円 → 百万円; None stays None."""
+    def _v(val, divisor=1_000):
+        """千円 → 百万円; None stays None."""
         return round(val / divisor) if val is not None else None
 
     def _pct(val):
         """Ratio → percentage float rounded to 1dp; None stays None."""
         return round(float(val) * 100, 1) if val is not None else None
 
+    def _yoy(curr, prev):
+        if curr is not None and prev is not None and prev != 0:
+            return round((curr - prev) / abs(prev), 4)
+        return None
+
     fin_rows = []
     for r in annual_reports:
         is_ = next(iter(r.income_statements.all()), None)
         bs_ = next(iter(r.balance_sheets.all()), None)
         cf_ = next(iter(r.cash_flow_statements.all()), None)
+
+        revenue = _v(is_.revenue) if is_ else None
+        op_profit = _v(is_.operating_profit) if is_ else None
+        prev = fin_rows[-1] if fin_rows else None
+
         fin_rows.append({
             "label": r.period_end.strftime("%Y/%m") if r.period_end else str(r.fiscal_year),
             "fiscal_year": r.fiscal_year,
             "period_end": r.period_end.isoformat() if r.period_end else None,
             # P&L
-            "revenue":          _v(is_.revenue)          if is_ else None,
+            "revenue":          revenue,
             "gross_profit":     _v(is_.gross_profit)      if is_ else None,
-            "operating_profit": _v(is_.operating_profit)  if is_ else None,
+            "operating_profit": op_profit,
             "ordinary_profit":  _v(is_.ordinary_profit)   if is_ else None,
             "net_income":       _v(is_.net_income)        if is_ else None,
             "eps":              float(is_.eps)            if is_ and is_.eps is not None else None,
             "roe":              _pct(is_.roe)             if is_ else None,
+            "operating_margin": round(op_profit / revenue * 100, 1) if op_profit is not None and revenue else None,
+            "revenue_yoy":      _yoy(revenue,   prev["revenue"])          if prev else None,
+            "op_profit_yoy":    _yoy(op_profit, prev["operating_profit"]) if prev else None,
             # B/S
             "total_assets":     _v(bs_.total_assets)      if bs_ else None,
             "net_assets":       _v(bs_.net_assets)        if bs_ else None,
@@ -163,6 +178,80 @@ def company_detail(request, stock_code):
             "fcf":           _v(cf_.free_cash_flow)  if cf_ else None,
         })
 
+    # Valuation metrics — use the most recent balance sheet across all report types
+    _latest_bs = (
+        BalanceSheet.objects
+        .filter(report__company=company, book_value_per_share__isnull=False)
+        .order_by("-report__period_end")
+        .first()
+    )
+    _latest_bps = float(_latest_bs.book_value_per_share) if _latest_bs else None
+
+    def _ratio(a, b, decimals=2):
+        if a is not None and b and b != 0:
+            return round(a / b, decimals)
+        return None
+
+    valuation = {
+        "forecast_eps": None,
+        "actual_bps": _latest_bps,
+        "forecast_dividend": None,
+        "per": None,
+        "pbr": None,
+        "dividend_yield": None,
+    }
+
+    # Latest full-year earnings forecast
+    _fc = (
+        company.forecast_records
+        .filter(target_fiscal_quarter=4)
+        .order_by("-announced_at")
+        .first()
+    )
+    latest_forecast = None
+    if _fc:
+        latest_forecast = {
+            "pk": _fc.pk,
+            "fiscal_year": _fc.target_fiscal_year,
+            "announced_at": _fc.announced_at,
+            "revenue":          _v(_fc.revenue),
+            "operating_profit": _v(_fc.operating_profit),
+            "ordinary_profit":  _v(_fc.ordinary_profit),
+            "net_income":       _v(_fc.net_income),
+            "eps":              float(_fc.eps) if _fc.eps is not None else None,
+            "revenue_yoy":      float(_fc.revenue_yoy) if _fc.revenue_yoy is not None else None,
+            "op_profit_yoy":    float(_fc.op_profit_yoy) if _fc.op_profit_yoy is not None else None,
+        }
+
+    # Latest dividend forecast
+    latest_dividend = (
+        company.dividend_forecasts
+        .order_by("-announced_at")
+        .first()
+    )
+
+    # Fill valuation metrics now that forecast data is available
+    price = float(company.share_price) if company.share_price else None
+    _feps = latest_forecast["eps"] if latest_forecast else None
+    _fdiv = None
+    if latest_dividend:
+        d = latest_dividend
+        if d.annual_dividend:
+            _fdiv = float(d.annual_dividend)
+        else:
+            interim = d.interim_dividend_paid or d.interim_dividend or 0
+            year_end = d.year_end_dividend or 0
+            total = interim + year_end
+            if total:
+                _fdiv = float(total)
+    valuation.update({
+        "forecast_eps":      _feps,
+        "forecast_dividend": _fdiv,
+        "per":          _ratio(price, _feps, 1),
+        "pbr":          _ratio(price, _latest_bps, 2),
+        "dividend_yield": round(_fdiv / price * 100, 2) if _fdiv and price else None,
+    })
+
     return render(request, "listings/company_detail.html", {
         "company": company,
         "latest_snapshot": latest_snapshot,
@@ -173,6 +262,9 @@ def company_detail(request, stock_code):
         "total_disclosures": total_disclosures,
         "disclosure_batch": DISCLOSURE_BATCH,
         "fin_rows": fin_rows,
+        "valuation": valuation,
+        "latest_forecast": latest_forecast,
+        "latest_dividend": latest_dividend,
     })
 
 

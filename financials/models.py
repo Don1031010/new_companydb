@@ -144,10 +144,12 @@ class BalanceSheet(models.Model):
 
     # --- Equity ---
     net_assets = models.BigIntegerField(null=True, blank=True, help_text="純資産合計")
-    shareholders_equity = models.BigIntegerField(null=True, blank=True, help_text="株主資本")
+    owners_equity = models.BigIntegerField(null=True, blank=True, help_text="自己資本")
     capital_stock = models.BigIntegerField(null=True, blank=True, help_text="資本金")
     retained_earnings = models.BigIntegerField(null=True, blank=True, help_text="利益剰余金")
     non_controlling_interests = models.BigIntegerField(null=True, blank=True, help_text="非支配株主持分")
+    shares_issued = models.BigIntegerField(null=True, blank=True, help_text="発行済株式数（自己株式含む）")
+    treasury_shares = models.BigIntegerField(null=True, blank=True, help_text="自己株式数")
     equity_ratio = models.DecimalField(
         max_digits=8, decimal_places=4, null=True, blank=True,
         help_text="自己資本比率 (ratio)",

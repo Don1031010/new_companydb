@@ -2,13 +2,31 @@
 snippets.py — Register financial statement models as Wagtail Snippets.
 """
 
-from wagtail.snippets.views.snippets import SnippetViewSet, SnippetViewSetGroup
+from wagtail.snippets.views.snippets import SnippetViewSet, SnippetViewSetGroup, CreateView
 from wagtail.admin.panels import (
     FieldPanel, FieldRowPanel, InlinePanel, MultiFieldPanel, ObjectList, TabbedInterface,
 )
 from wagtail.admin.ui.tables import Column, TitleColumn
 
 from .models import FinancialReport, IncomeStatement, BalanceSheet, CashFlowStatement, EmployeeInfo, ForecastRecord, DividendForecast
+
+
+class CompanyPrefillMixin:
+    """Populate the company field from ?company=<pk> on the add form."""
+    def get_initial(self):
+        initial = super().get_initial()
+        company_pk = self.request.GET.get("company")
+        if company_pk:
+            initial["company"] = company_pk
+        return initial
+
+
+class ForecastRecordCreateView(CompanyPrefillMixin, CreateView):
+    pass
+
+
+class DividendForecastCreateView(CompanyPrefillMixin, CreateView):
+    pass
 
 
 class FinancialReportViewSet(SnippetViewSet):
@@ -94,7 +112,7 @@ class FinancialReportViewSet(SnippetViewSet):
             ], heading="有利子負債明細"),
             FieldRowPanel([
                 FieldPanel("net_assets"),
-                FieldPanel("shareholders_equity"),
+                FieldPanel("owners_equity"),
                 FieldPanel("equity_ratio"),
                 FieldPanel("book_value_per_share"),
             ]),
@@ -208,7 +226,7 @@ class BalanceSheetViewSet(SnippetViewSet):
         ], heading="有利子負債明細"),
         FieldRowPanel([
             FieldPanel("net_assets"),
-            FieldPanel("shareholders_equity"),
+            FieldPanel("owners_equity"),
             FieldPanel("equity_ratio"),
             FieldPanel("book_value_per_share"),
         ]),
@@ -284,6 +302,7 @@ class ForecastRecordViewSet(SnippetViewSet):
     model = ForecastRecord
     menu_label = "業績予想"
     icon = "pick"
+    add_view_class = ForecastRecordCreateView
     list_display = [
         TitleColumn("__str__", label="予想", url_name="wagtailsnippets_financials_forecastrecord:edit"),
         Column("announced_at", label="開示日"),
@@ -327,6 +346,7 @@ class DividendForecastViewSet(SnippetViewSet):
     model = DividendForecast
     menu_label = "配当予想"
     icon = "pick"
+    add_view_class = DividendForecastCreateView
     list_display = [
         TitleColumn("__str__", label="予想", url_name="wagtailsnippets_financials_dividendforecast:edit"),
         Column("announced_at", label="開示日"),

@@ -26,20 +26,26 @@ logger = logging.getLogger(__name__)
 
 EDINET_BASE = "https://disclosure.edinet-fsa.go.jp/api/v2"
 
-# XBRL element names → our model fields
-# These are the standard jpcrp (Japan Taxonomy) element local names.
-INCOME_XBRL_MAP = {
+# XBRL element names → model fields, split by value type.
+# Monetary fields are stored in thousands of yen (千円): raw yen value ÷ 1,000.
+# Ratio fields are stored as decimal fractions: EDINET already stores them as decimals (0.107 = 10.7%), stored as-is.
+# Per-share fields are stored as-is in yen.
+INCOME_MONETARY = {
     "NetSales": "revenue",
     "GrossProfit": "gross_profit",
     "OperatingIncome": "operating_profit",                                      # 営業利益
     "OrdinaryIncome": "ordinary_profit",                                        # 経常利益
     "ProfitLossAttributableToOwnersOfParent": "net_income",                     # 親会社株主に帰属する当期純利益
     "ResearchAndDevelopmentExpensesSGA": "rd_expenses",                         # 研究開発費
-    "BasicEarningsLossPerShareSummaryOfBusinessResults": "eps",                 # 1株当たり純利益（公表値）
-    "DilutedEarningsPerShareSummaryOfBusinessResults": "diluted_eps",           # 希薄化後EPS（公表値）
+}
+INCOME_RATIO = {
     "RateOfReturnOnEquitySummaryOfBusinessResults": "roe",                      # 自己資本利益率（公表値）
 }
-BALANCE_XBRL_MAP = {
+INCOME_PERSHARE = {
+    "BasicEarningsLossPerShareSummaryOfBusinessResults": "eps",                 # 1株当たり純利益（公表値）
+    "DilutedEarningsPerShareSummaryOfBusinessResults": "diluted_eps",           # 希薄化後EPS（公表値）
+}
+BALANCE_MONETARY = {
     "Assets": "total_assets",
     "CurrentAssets": "current_assets",
     "NoncurrentAssets": "non_current_assets",
@@ -47,25 +53,33 @@ BALANCE_XBRL_MAP = {
     "Liabilities": "total_liabilities",
     "CurrentLiabilities": "current_liabilities",
     "NetAssets": "net_assets",
-    "ShareholdersEquity": "shareholders_equity",
-    "EquityToAssetRatioSummaryOfBusinessResults": "equity_ratio",       # 自己資本比率
-    "NetAssetsPerShareSummaryOfBusinessResults": "book_value_per_share", # 1株当たり純資産
     # Interest-bearing debt components
-    "ShortTermLoansPayable": "short_term_loans",                        # 短期借入金
-    "CommercialPapersLiabilities": "commercial_paper",                  # CP
-    "BondsPayable": "bonds_payable_current",                            # 社債（流動）
-    "LongTermLoansPayable": "long_term_loans",                          # 長期借入金
-    "BondsPayableNoncurrent": "bonds_payable",                          # 社債（固定）
-    "LeaseObligationsCL": "lease_obligations_current",                  # リース債務（流動）
-    "LeaseObligationsNCL": "lease_obligations_non_current",             # リース債務（固定）
+    "ShortTermLoansPayable": "short_term_loans",                                # 短期借入金
+    "CommercialPapersLiabilities": "commercial_paper",                          # CP
+    "BondsPayable": "bonds_payable_current",                                    # 社債（流動）
+    "LongTermLoansPayable": "long_term_loans",                                  # 長期借入金
+    "BondsPayableNoncurrent": "bonds_payable",                                  # 社債（固定）
+    "LeaseObligationsCL": "lease_obligations_current",                          # リース債務（流動）
+    "LeaseObligationsNCL": "lease_obligations_non_current",                     # リース債務（固定）
 }
-CF_XBRL_MAP = {
+BALANCE_RATIO = {
+    "EquityToAssetRatioSummaryOfBusinessResults": "equity_ratio",               # 自己資本比率
+}
+BALANCE_PERSHARE = {
+    "NetAssetsPerShareSummaryOfBusinessResults": "book_value_per_share",        # 1株当たり純資産
+}
+CF_MONETARY = {
     "NetCashProvidedByUsedInOperatingActivities": "operating_cf",
     "NetCashProvidedByUsedInInvestmentActivities": "investing_cf",              # note: Investment not Investing
     "NetCashProvidedByUsedInFinancingActivities": "financing_cf",
     "CapitalExpendituresOverviewOfCapitalExpendituresEtc": "capex",             # 設備投資額（設備投資等の概要）
     "DepreciationAndAmortizationOpeCF": "depreciation",                        # 減価償却費
 }
+
+# Combined maps kept for backward-compatible lookups (e.g. verbose element discovery)
+INCOME_XBRL_MAP = {**INCOME_MONETARY, **INCOME_RATIO, **INCOME_PERSHARE}
+BALANCE_XBRL_MAP = {**BALANCE_MONETARY, **BALANCE_RATIO, **BALANCE_PERSHARE}
+CF_XBRL_MAP = {**CF_MONETARY}
 
 # Employee data — annual report only (有価証券報告書, form_code=030000).
 # Same element names appear in both consolidated and non-consolidated contexts,
@@ -121,9 +135,11 @@ class EdinetClient:
         edinet_code: str,
         year: int,
         form_codes: tuple[str, ...] = ("030000",  # 有価証券報告書
+                                        "030001",  # 訂正有価証券報告書
                                         "043A00",  # 半期報告書（2024年制度改正後）
-                                        "043000",  # 四半期報告書 Q1/Q3（旧制度、2024年以前）
-                                        "043001"), # 四半期報告書 Q2（旧制度）
+                                        "043A01",  # 訂正半期報告書（2024年制度改正後）
+                                        "043000",  # 四半期報告書（旧制度）
+                                        "043001"), # 訂正四半期報告書（旧制度）
     ) -> list[dict]:
         """
         Looks up filings for one EDINET code using the cached EDINETDocument table
@@ -140,7 +156,7 @@ class EdinetClient:
             form_code__in=form_codes,
             submit_date__year=year,
             withdrawn=False,
-        ).values("doc_id", "form_code", "period_end", "submit_date", "description")
+        ).order_by("submit_date").values("doc_id", "form_code", "period_end", "submit_date", "description")
 
         results = [
             {
@@ -261,7 +277,10 @@ class EdinetClient:
             raise ImportError("pip install lxml  # required for XBRL parsing")
 
         values: dict = {}
-        all_maps = {**INCOME_XBRL_MAP, **BALANCE_XBRL_MAP, **CF_XBRL_MAP}
+        all_monetary = {**INCOME_MONETARY, **BALANCE_MONETARY, **CF_MONETARY}
+        all_ratio    = {**INCOME_RATIO,    **BALANCE_RATIO}
+        all_pershare = {**INCOME_PERSHARE, **BALANCE_PERSHARE}
+        all_maps = {**all_monetary, **all_ratio, **all_pershare}
         target_elements = set(all_maps.keys())
 
         has_xbrl = any(n.endswith(".xbrl") for n in zf.namelist())
@@ -278,7 +297,6 @@ class EdinetClient:
             root = tree.getroot()
 
             if verbose:
-                # Print a sample of unique element local names to help diagnose mismatches
                 sample = set()
                 for elem in root.iter():
                     sample.add(etree.QName(elem.tag).localname)
@@ -288,8 +306,6 @@ class EdinetClient:
                 local = etree.QName(elem.tag).localname
                 if local not in target_elements:
                     continue
-                # Prefer consolidated (連結) over standalone: context typically
-                # contains "ConsolidatedInstant" or "ConsolidatedDuration"
                 context_ref = elem.get("contextRef", "")
                 is_consolidated = "Consolidated" in context_ref
                 text = (elem.text or "").strip()
@@ -301,9 +317,18 @@ class EdinetClient:
                     continue
 
                 field = all_maps[local]
+                if local in all_monetary:
+                    val = int(raw // 1000)
+                elif local in all_ratio:
+                    val = raw          # already a decimal fraction in EDINET XBRL
+                else:  # per-share
+                    val = raw
+
                 # Store consolidated if available, else standalone
                 if field not in values or is_consolidated:
-                    values[field] = int(raw) if raw == raw.to_integral_value() else raw
+                    values[field] = val
+                    if verbose:
+                        print(f"    {local} → {field} = {val}  [consolidated={is_consolidated}]")
 
         return values
 
@@ -316,7 +341,10 @@ class EdinetClient:
         import csv
         import io as _io
 
-        all_maps = {**INCOME_XBRL_MAP, **BALANCE_XBRL_MAP, **CF_XBRL_MAP}
+        all_monetary = {**INCOME_MONETARY, **BALANCE_MONETARY, **CF_MONETARY}
+        all_ratio    = {**INCOME_RATIO,    **BALANCE_RATIO}
+        all_pershare = {**INCOME_PERSHARE, **BALANCE_PERSHARE}
+        all_maps = {**all_monetary, **all_ratio, **all_pershare}
         target_elements = set(all_maps.keys())
         values: dict = {}
         values_priority: dict = {}  # tracks best priority seen per field
@@ -383,16 +411,23 @@ class EdinetClient:
                         continue
 
                     field = all_maps[local]
+                    if local in all_monetary:
+                        val = int(num // 1000)
+                    elif local in all_ratio:
+                        val = num      # already a decimal fraction in EDINET XBRL
+                    else:  # per-share
+                        val = num
+
                     if consolidated == "連結":
                         priority = 2
                     else:  # その他 (SummaryOfBusinessResults consolidated section)
                         priority = 1
 
                     if priority > values_priority.get(field, -1):
-                        values[field] = int(num) if num == num.to_integral_value() else num
+                        values[field] = val
                         values_priority[field] = priority
                     if verbose:
-                        print(f"    {local} → {field} = {num}  [連結={consolidated}, ctx={context_id}, 年度={fiscal_period}]")
+                        print(f"    {local} → {field} = {val}  [連結={consolidated}, ctx={context_id}, 年度={fiscal_period}]")
 
         if verbose:
             print(f"  final values: {values}")
@@ -507,14 +542,15 @@ class EdinetClient:
         # Determine report type from formCode
         form_code = doc_meta.get("formCode", "")
         desc = doc_meta.get("docDescription", "")
-        if form_code == "030000":
+        if form_code in ("030000", "030001"):
+            # 有価証券報告書 and its correction
             report_type = FinancialReport.ReportType.ANNUAL
             fiscal_quarter = 4
-        elif form_code == "043A00":
-            # 半期報告書 — always the 6-month (Q2) point
+        elif form_code in ("043A00", "043A01"):
+            # 半期報告書 and its correction — always the 6-month (Q2) point
             report_type, fiscal_quarter = FinancialReport.ReportType.Q2, 2
         else:
-            # 四半期報告書（旧制度）: quarter from docDescription
+            # 四半期報告書 / 訂正四半期報告書（旧制度）: quarter from docDescription
             if "第1四半期" in desc:
                 report_type, fiscal_quarter = FinancialReport.ReportType.Q1, 1
             elif "第2四半期" in desc or "中間" in desc:
@@ -574,7 +610,7 @@ class EdinetClient:
         # Uses a direct upsert rather than _upsert() because emp_values already
         # contains field names as keys (both consolidated and non-consolidated),
         # and the combined XBRL map would drop consolidated_* fields on merge.
-        if form_code == "030000" and zf is not None:
+        if form_code in ("030000", "030001") and zf is not None:
             emp_values = self.parse_employee_data(zf, verbose=verbose)
             if emp_values:
                 EmployeeInfo.objects.update_or_create(report=report, defaults=emp_values)

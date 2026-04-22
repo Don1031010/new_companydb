@@ -63,12 +63,12 @@ TSE_BALANCE_MONETARY = {
     # J-GAAP
     "TotalAssets": "total_assets",
     "NetAssets": "net_assets",
-    "OwnersEquity": "shareholders_equity",
+    "OwnersEquity": "owners_equity",
     "CashAndEquivalentsEndOfPeriod": "cash_and_equivalents",
     # IFRS
     "TotalAssetsIFRS": "total_assets",
     "TotalEquityIFRS": "net_assets",
-    "EquityAttributableToOwnersOfParentIFRS": "shareholders_equity",
+    "EquityAttributableToOwnersOfParentIFRS": "owners_equity",
     "CashAndCashEquivalentsAtEndOfPeriodIFRS": "cash_and_equivalents",
 }
 TSE_BALANCE_RATIO = {
@@ -82,6 +82,10 @@ TSE_BALANCE_PERSHARE = {
     "NetAssetsPerShare": "book_value_per_share",
     # IFRS
     "EquityAttributableToOwnersOfParentPerShareIFRS": "book_value_per_share",
+}
+TSE_BALANCE_SHARES = {
+    "NumberOfIssuedAndOutstandingSharesAtTheEndOfFiscalYearIncludingTreasuryStock": "shares_issued",
+    "NumberOfTreasuryStockAtTheEndOfFiscalYear": "treasury_shares",
 }
 
 # CF summary (annual only — from Summary file, tse-ed-t namespace)
@@ -120,7 +124,6 @@ ATTACHMENT_BALANCE_MAP = {
     "LeaseObligationsCL": "lease_obligations_current",
     "LeaseObligationsNCL": "lease_obligations_non_current",
     "NetAssets": "net_assets",
-    "ShareholdersEquity": "shareholders_equity",
     "CapitalStock": "capital_stock",
     "RetainedEarnings": "retained_earnings",
     "NonControllingInterests": "non_controlling_interests",
@@ -155,7 +158,8 @@ TSE_FORECAST_PERSHARE = {
 
 INCOME_FIELDS = set(TSE_INCOME_MONETARY.values()) | set(TSE_INCOME_RATIO.values()) | set(TSE_INCOME_PERSHARE.values())
 BALANCE_FIELDS = (set(TSE_BALANCE_MONETARY.values()) | set(TSE_BALANCE_RATIO.values())
-                  | set(TSE_BALANCE_PERSHARE.values()) | set(ATTACHMENT_BALANCE_MAP.values()))
+                  | set(TSE_BALANCE_PERSHARE.values()) | set(TSE_BALANCE_SHARES.values())
+                  | set(ATTACHMENT_BALANCE_MAP.values()))
 CF_FIELDS = set(TSE_CF_MONETARY.values()) | set(ATTACHMENT_CF_MAP.values())
 
 
@@ -198,9 +202,9 @@ def _extract_ixbrl(zf: zipfile.ZipFile, fname: str) -> list[tuple]:
     """
     with zf.open(fname) as f:
         content = f.read().decode("utf-8", errors="replace")
-    pattern = r'<ix:nonFraction\s([^>]+?)>([\d,.\-]+)</ix:nonFraction>'
+    pattern = r'<ix:nonfraction\s([^>]+?)>([\d,.\-]+)</ix:nonfraction>'
     results = []
-    for m in re.finditer(pattern, content):
+    for m in re.finditer(pattern, content, re.IGNORECASE):
         attrs, raw_val = m.group(1), m.group(2).replace(",", "")
         name_m = re.search(r'name="([^"]+)"', attrs)
         ctx_m = re.search(r'contextRef="([^"]+)"', attrs)
@@ -218,13 +222,45 @@ def _extract_ixbrl(zf: zipfile.ZipFile, fname: str) -> list[tuple]:
 
 
 def _extract_period_end(zf: zipfile.ZipFile) -> str | None:
-    """Extract the reporting period_end date from the Attachment XSD filename."""
+    """Extract the reporting period_end date.
+
+    1. Attachment XSD filename  (tse-...-YYYY-MM-DD-NN-YYYY-MM-DD.xsd)
+    2. Summary XSD filename     (same pattern)
+    3. xbrli:instant inside the iXBRL — the CurrentYearInstant / CurrentQuarterInstant context
+    """
+    DATE_PAT = re.compile(r'-(20\d\d-\d\d-\d\d)-\d\d-20\d\d')
+    attachment_date = summary_date = None
     for name in zf.namelist():
-        if "Attachment" in name and name.endswith(".xsd"):
-            # e.g. tse-acedjpfr-13010-2025-03-31-01-2025-05-12.xsd
-            m = re.search(r'-(20\d\d-\d\d-\d\d)-\d\d-20\d\d', name)
-            if m:
-                return m.group(1)
+        if not name.endswith(".xsd"):
+            continue
+        m = DATE_PAT.search(name)
+        if not m:
+            continue
+        if "Attachment" in name and attachment_date is None:
+            attachment_date = m.group(1)
+        elif "Summary" in name and summary_date is None:
+            summary_date = m.group(1)
+    if attachment_date or summary_date:
+        return attachment_date or summary_date
+
+    # Fallback: parse the instant date from XBRL context definitions in any iXBRL file.
+    # Look for CurrentYearInstant or CurrentQuarterInstant context.
+    INSTANT_CTX = re.compile(
+        r'id="(CurrentYearInstant|CurrentQuarterInstant|InterimInstant)"[^>]*>.*?'
+        r'<xbrli:instant>(20\d\d-\d\d-\d\d)</xbrli:instant>',
+        re.DOTALL,
+    )
+    for name in zf.namelist():
+        if not name.endswith((".htm", ".html", ".xbrl")):
+            continue
+        try:
+            with zf.open(name) as f:
+                content = f.read().decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        m = INSTANT_CTX.search(content)
+        if m:
+            return m.group(2)
     return None
 
 
@@ -251,6 +287,8 @@ def parse_tse_xbrl(zf: zipfile.ZipFile, fiscal_quarter: int, verbose: bool = Fal
 
     def apply(elements):
         for local, ctx, val, scale in elements:
+            if "NonConsolidated" in ctx:
+                continue
             if "ConsolidatedMember" not in ctx or "ResultMember" not in ctx:
                 continue
             if "Prior" in ctx or "Next" in ctx or "Forecast" in ctx:
@@ -276,6 +314,11 @@ def parse_tse_xbrl(zf: zipfile.ZipFile, fiscal_quarter: int, verbose: bool = Fal
                 values[field] = val
                 if verbose:
                     print(f"    {local} → {field} = {val} 円/株")
+            elif local in TSE_BALANCE_SHARES:
+                field = TSE_BALANCE_SHARES[local]
+                values[field] = int(val * (Decimal(10) ** scale))
+                if verbose:
+                    print(f"    {local} → {field} = {values[field]:,} 株")
 
     # Summary file (all quarters)
     for fname in zf.namelist():
@@ -324,6 +367,28 @@ def parse_tse_xbrl(zf: zipfile.ZipFile, fiscal_quarter: int, verbose: bool = Fal
                         values[field] = int(yen // 1000)
                         if verbose:
                             print(f"    {local} → {field} = {values[field]:,} 千円")
+
+    # Derive owners_equity from B/S attachment data if Summary didn't provide it.
+    # 自己資本 = 純資産合計 − 非支配株主持分
+    if values.get("owners_equity") is None:
+        net = values.get("net_assets")
+        nci = values.get("non_controlling_interests") or 0
+        if net is not None:
+            values["owners_equity"] = net - nci
+            if verbose:
+                print(f"  [derived] owners_equity = {values['owners_equity']:,} 千円")
+
+    # Calculate BPS for quarterly reports where the Summary doesn't include it.
+    # BPS (円) = 自己資本 (千円) × 1,000 ÷ (発行済株式数 − 自己株式数)
+    if values.get("book_value_per_share") is None:
+        equity = values.get("owners_equity")
+        issued = values.get("shares_issued")
+        treasury = values.get("treasury_shares") or 0
+        float_shares = issued - treasury if issued is not None else None
+        if equity is not None and float_shares:
+            values["book_value_per_share"] = Decimal(equity * 1000) / float_shares
+            if verbose:
+                print(f"  [derived] book_value_per_share = {values['book_value_per_share']:.2f} 円/株")
 
     return values
 
@@ -451,6 +516,9 @@ class TseClient:
         period_end = _extract_period_end(zf)
         if verbose:
             print(f"  period_end={period_end}")
+        if period_end is None:
+            logger.warning("Cannot determine period_end for %s — skipping", disclosure.xbrl_url)
+            return None, None
 
         filed_at = None
         if disclosure.disclosed_date:

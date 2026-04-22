@@ -7,29 +7,31 @@
 
 {# ── Page header ──────────────────────────────────────────────────────────── #}
 <div class="bg-white border-b border-gray-200">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <a href="/companies/" class="inline-flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 mb-4 transition-colors">
-            ← 会社一覧に戻る
-        </a>
-        <div class="flex flex-wrap items-start gap-4">
-            <div class="flex-1 min-w-0">
-                <div class="flex flex-wrap items-center gap-3 mb-1">
-                    <span class="font-mono text-2xl font-bold text-indigo-600">{{ company.stock_code }}</span>
-                    {% if company.status == "active" %}
-                    <span class="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2.5 py-1">上場中</span>
-                    {% elif company.status == "delisted" %}
-                    <span class="text-xs bg-red-50 text-red-600 border border-red-200 rounded-full px-2.5 py-1">上場廃止</span>
-                    {% else %}
-                    <span class="text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-1">{{ company.get_status_display }}</span>
-                    {% endif %}
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+        <div class="flex items-center justify-between gap-4">
+            <div class="min-w-0">
+                <div class="flex flex-wrap items-baseline gap-2">
+                    <span class="font-mono text-xl font-bold text-indigo-600">{{ company.stock_code }}</span>
+                    <h1 class="text-xl font-bold text-gray-900">{{ company.name_ja }}</h1>
                     {% if company.is_foreign %}
-                    <span class="text-xs bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-2.5 py-1">外国株</span>
+                    <span class="text-xs bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-2 py-0.5">外国株</span>
                     {% endif %}
                 </div>
-                <h1 class="text-2xl font-bold text-gray-900">{{ company.name_ja }}</h1>
-                {% if company.name_kana %}
-                <div class="text-sm text-gray-500 mt-0.5">{{ company.name_kana }}</div>
-                {% endif %}
+                <div class="mt-1 flex flex-wrap gap-1.5">
+                    {% for listing in company.active_listings %}
+                    <span class="text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded px-2 py-0.5">
+                        <a href="/companies/?exchange={{ listing.exchange.code }}" class="hover:underline">{{ listing.exchange.short_name|default:listing.exchange.name_ja }}</a>
+                        /
+                        <a href="/companies/?segment={{ listing.market_segment }}" class="hover:underline">{{ listing.get_market_segment_display|strip_exchange }}</a>
+                    </span>
+                    {% endfor %}
+                    {% if company.get_industry_33_display %}
+                    <span class="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5">{{ company.get_industry_33_display }}</span>
+                    {% endif %}
+                    {% if company.get_scale_category_display %}
+                    <span class="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5">{{ company.get_scale_category_display }}</span>
+                    {% endif %}
+                </div>
             </div>
             <div class="text-right text-sm text-gray-500 shrink-0">
                 {% if company.market_cap %}
@@ -38,48 +40,31 @@
                 {% endif %}
             </div>
         </div>
-
-        {# Active market segments #}
-        <div class="mt-3 flex flex-wrap gap-1.5">
-            {% for listing in company.active_listings %}
-            <span class="text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded px-2 py-0.5">
-                <a href="/companies/?exchange={{ listing.exchange.code }}" class="hover:underline">{{ listing.exchange.short_name|default:listing.exchange.name_ja }}</a>
-                /
-                <a href="/companies/?segment={{ listing.market_segment }}" class="hover:underline">{{ listing.get_market_segment_display }}</a>
-            </span>
-            {% endfor %}
-            {% if company.get_industry_33_display %}
-            <span class="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5">{{ company.get_industry_33_display }}</span>
-            {% endif %}
-            {% if company.get_scale_category_display %}
-            <span class="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5">{{ company.get_scale_category_display }}</span>
-            {% endif %}
-        </div>
     </div>
 </div>
 
 {# ── Body ─────────────────────────────────────────────────────────────────── #}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
 
-    {# ── Row 1: Basic info + Share price side-by-side ─────────────────────── #}
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    {# ── Row 1: Basic info + Stock price + Valuation ─────────────────────── #}
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
 
         {# Basic info card #}
-        <div class="lg:col-span-2 bg-white rounded-xl shadow-md p-6">
-            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">基本情報</h2>
+        <div class="lg:col-span-3 bg-white rounded-xl shadow-md p-4">
+            <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-4 border-l-4 border-indigo-500 pl-3">基本情報</h2>
             <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
+                {% if company.established_date %}
+                <div>
+                    <dt class="text-gray-500">設立年月日</dt>
+                    <dd class="text-gray-900 font-medium mt-0.5">{{ company.established_date|date:"Y-m-d" }}</dd>
+                </div>
+                {% endif %}
                 {% if company.representative_name %}
                 <div>
                     <dt class="text-gray-500">代表者</dt>
                     <dd class="text-gray-900 font-medium mt-0.5">
                         {% if company.representative_title %}{{ company.representative_title }}　{% endif %}{{ company.representative_name }}
                     </dd>
-                </div>
-                {% endif %}
-                {% if company.established_date %}
-                <div>
-                    <dt class="text-gray-500">設立年月日</dt>
-                    <dd class="text-gray-900 font-medium mt-0.5">{{ company.established_date|date:"Y-m-d" }}</dd>
                 </div>
                 {% endif %}
                 {% if company.fiscal_year_end_month %}
@@ -132,60 +117,43 @@
             </dl>
         </div>
 
-        {# Share price card #}
-        <div class="bg-white rounded-xl shadow-md p-6">
-            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">株式情報</h2>
+        {# Stock price card #}
+        <div class="bg-white rounded-xl shadow-md p-4">
+            <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-4 border-l-4 border-indigo-500 pl-3">株式情報</h2>
             <dl class="space-y-3 text-sm">
                 {% if company.share_price %}
                 <div>
                     <dt class="text-gray-500">株価</dt>
-                    <dd class="mt-0.5">
-                        <span class="text-2xl font-bold text-gray-900">{{ company.share_price|floatformat:0|intcomma }}</span>
-                        <span class="text-sm font-normal text-gray-500"> 円</span>
-                        {% if company.share_price_at %}
-                        <div class="text-xs text-gray-400 mt-0.5">{{ company.share_price_at|date:"Y-m-d" }} {{ company.share_price_at|time:"H:i" }}</div>
-                        {% endif %}
+                    <dd class="mt-0.5 flex items-baseline justify-between">
+                        <div>
+                            <span class="text-2xl font-bold text-gray-900">{{ company.share_price|floatformat:0|intcomma }}</span>
+                            <span class="text-sm font-normal text-gray-500"> 円</span>
+                        </div>
+                        <span class="text-xs text-gray-400">{{ company.unit_shares }}株単位</span>
                     </dd>
+                    {% if company.share_price_at %}
+                    <div class="text-xs text-gray-400 mt-0.5">{{ company.share_price_at|date:"Y-m-d" }} {{ company.share_price_at|time:"H:i" }}</div>
+                    {% endif %}
                 </div>
                 {% endif %}
                 {% if company.yearly_high %}
                 <div class="flex justify-between">
                     <div>
                         <dt class="text-gray-500">年初来高値</dt>
-                        <dd class="text-gray-900 font-medium mt-0.5">{{ company.yearly_high|floatformat:0|intcomma }}円
-                            {% if company.yearly_high_date %}<span class="text-xs text-gray-400">（{{ company.yearly_high_date|date:"Y-m-d" }}）</span>{% endif %}
-                        </dd>
+                        <dd class="text-gray-900 font-medium mt-0.5">{{ company.yearly_high|floatformat:0|intcomma }}円</dd>
+                        {% if company.yearly_high_date %}<div class="text-xs text-gray-400">{{ company.yearly_high_date|date:"Y-m-d" }}</div>{% endif %}
                     </div>
                     {% if company.yearly_low %}
                     <div class="text-right">
                         <dt class="text-gray-500">年初来安値</dt>
-                        <dd class="text-gray-900 font-medium mt-0.5">{{ company.yearly_low|floatformat:0|intcomma }}円
-                            {% if company.yearly_low_date %}<span class="text-xs text-gray-400">（{{ company.yearly_low_date|date:"Y-m-d" }}）</span>{% endif %}
-                        </dd>
+                        <dd class="text-gray-900 font-medium mt-0.5">{{ company.yearly_low|floatformat:0|intcomma }}円</dd>
+                        {% if company.yearly_low_date %}<div class="text-xs text-gray-400">{{ company.yearly_low_date|date:"Y-m-d" }}</div>{% endif %}
                     </div>
                     {% endif %}
                 </div>
                 {% endif %}
-                {% if company.shares_outstanding %}
-                <div>
-                    <dt class="text-gray-500">発行済株式数</dt>
-                    <dd class="text-gray-900 font-medium mt-0.5">{{ company.shares_outstanding|floatformat:0|intcomma }} 株</dd>
-                </div>
-                {% endif %}
-                {% if latest_snapshot.treasury_shares %}
-                <div>
-                    <dt class="text-gray-500">自己株式数</dt>
-                    <dd class="text-gray-900 font-medium mt-0.5">
-                        {{ latest_snapshot.treasury_shares|floatformat:0|intcomma }} 株{% if treasury_pct %}<span class="text-gray-400 font-normal"> ({{ treasury_pct }}%)</span>{% endif %}
-                    </dd>
-                </div>
-                {% endif %}
-                <div>
-                    <dt class="text-gray-500">売買単位</dt>
-                    <dd class="text-gray-900 font-medium mt-0.5">{{ company.unit_shares }} 株</dd>
-                </div>
                 {# Flags #}
-                <div class="pt-2 flex flex-wrap gap-1.5">
+                <div class="pt-1 flex flex-wrap gap-1.5">
                     {% if company.is_margin_trading %}
                     <span class="text-xs bg-teal-50 text-teal-700 border border-teal-200 rounded px-2 py-0.5">信用銘柄</span>
                     {% endif %}
@@ -195,93 +163,355 @@
                 </div>
             </dl>
         </div>
-    </div>
 
-    {# ── Listings table ───────────────────────────────────────────────────── #}
-    {% with all_listings=company.listings.all %}
-    {% if all_listings %}
-    <div class="bg-white rounded-xl shadow-md overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-100">
-            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide">上場情報</h2>
+        {# Valuation card #}
+        <div class="bg-white rounded-xl shadow-md p-4">
+            <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-4 border-l-4 border-indigo-500 pl-3">バリュエーション</h2>
+            <dl class="space-y-3 text-sm">
+                <div class="flex justify-between items-baseline">
+                    <dt class="text-gray-500">予想PER</dt>
+                    <dd class="font-medium tabular-nums text-gray-900">
+                        {% if valuation.per %}{{ valuation.per|fmt_num:"1" }} <span class="text-xs font-normal text-gray-400">倍</span>{% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div class="flex justify-between items-baseline">
+                    <dt class="text-gray-500">実績PBR</dt>
+                    <dd class="font-medium tabular-nums text-gray-900">
+                        {% if valuation.pbr %}{{ valuation.pbr|fmt_num:"2" }} <span class="text-xs font-normal text-gray-400">倍</span>{% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div class="flex justify-between items-baseline">
+                    <dt class="text-gray-500">予想配当利回り</dt>
+                    <dd class="font-medium tabular-nums text-gray-900">
+                        {% if valuation.dividend_yield %}{{ valuation.dividend_yield|fmt_num:"2" }} <span class="text-xs font-normal text-gray-400">%</span>{% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div class="border-t border-gray-100 pt-3 flex justify-between items-baseline">
+                    <dt class="text-gray-500">予想EPS</dt>
+                    <dd class="font-medium tabular-nums text-gray-900">
+                        {% if valuation.forecast_eps %}{{ valuation.forecast_eps|fmt_num:"2" }} <span class="text-xs font-normal text-gray-400">円</span>{% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div class="flex justify-between items-baseline">
+                    <dt class="text-gray-500">実績BPS</dt>
+                    <dd class="font-medium tabular-nums text-gray-900">
+                        {% if valuation.actual_bps %}{{ valuation.actual_bps|fmt_num:"2" }} <span class="text-xs font-normal text-gray-400">円</span>{% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div class="flex justify-between items-baseline">
+                    <dt class="text-gray-500">予想1株配当</dt>
+                    <dd class="font-medium tabular-nums text-gray-900">
+                        {% if valuation.forecast_dividend %}{{ valuation.forecast_dividend|fmt_num:"2" }} <span class="text-xs font-normal text-gray-400">円</span>{% else %}—{% endif %}
+                    </dd>
+                </div>
+            </dl>
         </div>
-        <table class="w-full text-sm">
-            <thead>
-                <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide border-b border-gray-200">
-                    <th class="px-4 py-3 text-left">取引所</th>
-                    <th class="px-4 py-3 text-left">市場区分</th>
-                    <th class="px-4 py-3 text-left hidden sm:table-cell">上場日</th>
-                    <th class="px-4 py-3 text-left hidden sm:table-cell">廃止日</th>
-                    <th class="px-4 py-3 text-center">状態</th>
-                    <th class="px-4 py-3 text-left hidden md:table-cell">備考</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100">
-                {% for listing in all_listings %}
-                <tr>
-                    <td class="px-4 py-3 font-medium">
-                        <a href="/companies/?exchange={{ listing.exchange.code }}"
-                           class="text-indigo-600 hover:text-indigo-800 hover:underline">
-                            {{ listing.exchange.short_name|default:listing.exchange.name_ja }}
-                        </a>
-                    </td>
-                    <td class="px-4 py-3">
-                        {% if listing.market_segment %}
-                        <a href="/companies/?segment={{ listing.market_segment }}"
-                           class="text-indigo-600 hover:text-indigo-800 hover:underline">
-                            {{ listing.get_market_segment_display }}
-                        </a>
-                        {% else %}—{% endif %}
-                    </td>
-                    <td class="px-4 py-3 text-gray-600 hidden sm:table-cell">{{ listing.listing_date|date:"Y-m-d"|default:"—" }}</td>
-                    <td class="px-4 py-3 text-gray-600 hidden sm:table-cell">{{ listing.delisting_date|date:"Y-m-d"|default:"—" }}</td>
-                    <td class="px-4 py-3 text-center">
-                        {% if listing.status == "active" %}
-                        <span class="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2 py-0.5">上場中</span>
-                        {% elif listing.status == "delisted" %}
-                        <span class="text-xs bg-red-50 text-red-600 border border-red-200 rounded-full px-2 py-0.5">廃止</span>
-                        {% else %}
-                        <span class="text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2 py-0.5">{{ listing.get_status_display }}</span>
-                        {% endif %}
-                    </td>
-                    <td class="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{{ listing.notes|default:"" }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
     </div>
-    {% endif %}
-    {% endwith %}
 
     {# ── Earnings dates ───────────────────────────────────────────────────── #}
     {% if company.earnings_date_annual or company.earnings_date_q1 or company.earnings_date_q2 or company.earnings_date_q3 %}
-    <div class="bg-white rounded-xl shadow-md p-6">
-        <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">決算発表日（予定）</h2>
+    <div class="bg-white rounded-xl shadow-md p-4">
+        <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-4 border-l-4 border-indigo-500 pl-3">決算発表日（予定）</h2>
         <dl class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
             {% if company.earnings_date_annual %}
             <div>
                 <dt class="text-gray-500">本決算</dt>
-                <dd class="text-gray-900 font-medium mt-0.5">{{ company.earnings_date_annual|date:"Y-m-d" }}</dd>
+                <dd class="mt-0.5">{% earnings_date company.earnings_date_annual %}</dd>
             </div>
             {% endif %}
             {% if company.earnings_date_q1 %}
             <div>
                 <dt class="text-gray-500">第1四半期</dt>
-                <dd class="text-gray-900 font-medium mt-0.5">{{ company.earnings_date_q1|date:"Y-m-d" }}</dd>
+                <dd class="mt-0.5">{% earnings_date company.earnings_date_q1 %}</dd>
             </div>
             {% endif %}
             {% if company.earnings_date_q2 %}
             <div>
                 <dt class="text-gray-500">第2四半期</dt>
-                <dd class="text-gray-900 font-medium mt-0.5">{{ company.earnings_date_q2|date:"Y-m-d" }}</dd>
+                <dd class="mt-0.5">{% earnings_date company.earnings_date_q2 %}</dd>
             </div>
             {% endif %}
             {% if company.earnings_date_q3 %}
             <div>
                 <dt class="text-gray-500">第3四半期</dt>
-                <dd class="text-gray-900 font-medium mt-0.5">{{ company.earnings_date_q3|date:"Y-m-d" }}</dd>
+                <dd class="mt-0.5">{% earnings_date company.earnings_date_q3 %}</dd>
             </div>
             {% endif %}
         </dl>
+    </div>
+    {% endif %}
+
+    {# ── Forecast ─────────────────────────────────────────────────────────── #}
+    {% if latest_forecast or latest_dividend %}
+    <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-100">
+            <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide border-l-4 border-indigo-500 pl-3">業績・配当予想</h2>
+        </div>
+        <div class="px-6 py-4 flex flex-col sm:flex-row gap-6">
+
+            {# -- P&L forecast ------------------------------------------------ #}
+            {% if latest_forecast %}
+            <div class="flex-1">
+                <div class="flex items-center gap-2 mb-2">
+                    <h3 class="text-xs font-semibold text-gray-600 uppercase tracking-wide">業績予想 FY{{ latest_forecast.fiscal_year }}</h3>
+                    <span class="text-xs text-gray-400">{{ latest_forecast.announced_at|date:"Y-m-d" }}</span>
+                    <a href="{% url 'wagtailsnippets_financials_forecastrecord:edit' latest_forecast.pk %}" target="_blank" title="編集" class="text-blue-400 hover:text-blue-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
+                    </a>
+                    <a href="{% url 'wagtailsnippets_financials_forecastrecord:add' %}?company={{ company.pk }}" target="_blank" title="新規追加" class="text-emerald-400 hover:text-emerald-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+                    </a>
+                </div>
+                <dl class="grid grid-cols-5 gap-x-4 gap-y-1 text-sm">
+                    {% if latest_forecast.revenue is not None %}
+                    <div>
+                        <dt class="text-xs text-gray-400">売上高</dt>
+                        <dd class="font-medium tabular-nums">{{ latest_forecast.revenue|fmt_num }}<span class="text-xs font-normal text-gray-400 ml-0.5">百万</span>
+                            {% if latest_forecast.revenue_yoy is not None %}<br>{% yoy_badge latest_forecast.revenue_yoy %}{% endif %}
+                        </dd>
+                    </div>
+                    {% endif %}
+                    {% if latest_forecast.operating_profit is not None %}
+                    <div>
+                        <dt class="text-xs text-gray-400">営業利益</dt>
+                        <dd class="font-medium tabular-nums">{{ latest_forecast.operating_profit|fmt_num }}<span class="text-xs font-normal text-gray-400 ml-0.5">百万</span>
+                            {% if latest_forecast.op_profit_yoy is not None %}<br>{% yoy_badge latest_forecast.op_profit_yoy %}{% endif %}
+                        </dd>
+                    </div>
+                    {% endif %}
+                    {% if latest_forecast.ordinary_profit is not None %}
+                    <div>
+                        <dt class="text-xs text-gray-400">経常利益</dt>
+                        <dd class="font-medium tabular-nums">{{ latest_forecast.ordinary_profit|fmt_num }}<span class="text-xs font-normal text-gray-400 ml-0.5">百万</span></dd>
+                    </div>
+                    {% endif %}
+                    {% if latest_forecast.net_income is not None %}
+                    <div>
+                        <dt class="text-xs text-gray-400">純利益</dt>
+                        <dd class="font-medium tabular-nums">{{ latest_forecast.net_income|fmt_num }}<span class="text-xs font-normal text-gray-400 ml-0.5">百万</span></dd>
+                    </div>
+                    {% endif %}
+                    {% if latest_forecast.eps is not None %}
+                    <div>
+                        <dt class="text-xs text-gray-400">EPS</dt>
+                        <dd class="font-medium tabular-nums">{{ latest_forecast.eps|fmt_num:"2" }}<span class="text-xs font-normal text-gray-400 ml-0.5">円</span></dd>
+                    </div>
+                    {% endif %}
+                </dl>
+            </div>
+            {% endif %}
+
+            {# -- Dividend forecast ------------------------------------------- #}
+            {% if latest_dividend %}
+            <div class="sm:border-l sm:border-gray-100 sm:pl-6">
+                <div class="flex items-center gap-2 mb-2">
+                    <h3 class="text-xs font-semibold text-gray-600 uppercase tracking-wide">配当予想 FY{{ latest_dividend.target_fiscal_year }}</h3>
+                    <span class="text-xs text-gray-400">{{ latest_dividend.announced_at|date:"Y-m-d" }}</span>
+                    <a href="{% url 'wagtailsnippets_financials_dividendforecast:edit' latest_dividend.pk %}" target="_blank" title="編集" class="text-blue-400 hover:text-blue-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
+                    </a>
+                    <a href="{% url 'wagtailsnippets_financials_dividendforecast:add' %}?company={{ company.pk }}" target="_blank" title="新規追加" class="text-emerald-400 hover:text-emerald-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+                    </a>
+                </div>
+                <dl class="grid grid-cols-3 gap-x-4 gap-y-1 text-sm">
+                    {% if latest_dividend.interim_dividend is not None or latest_dividend.interim_dividend_paid is not None %}
+                    <div>
+                        <dt class="text-xs text-gray-400">中間配当</dt>
+                        <dd class="font-medium tabular-nums">
+                            {% if latest_dividend.interim_dividend_paid is not None %}
+                                {{ latest_dividend.interim_dividend_paid }}<span class="text-xs font-normal text-gray-400 ml-0.5">円</span><br><span class="text-xs text-gray-400">実績</span>
+                            {% elif latest_dividend.interim_dividend is not None %}
+                                {{ latest_dividend.interim_dividend }}<span class="text-xs font-normal text-gray-400 ml-0.5">円</span><br><span class="text-xs text-gray-400">予想</span>
+                            {% endif %}
+                        </dd>
+                    </div>
+                    {% endif %}
+                    {% if latest_dividend.year_end_dividend is not None or latest_dividend.year_end_dividend_paid is not None %}
+                    <div>
+                        <dt class="text-xs text-gray-400">期末配当</dt>
+                        <dd class="font-medium tabular-nums">
+                            {% if latest_dividend.year_end_dividend_paid is not None %}
+                                {{ latest_dividend.year_end_dividend_paid }}<span class="text-xs font-normal text-gray-400 ml-0.5">円</span><br><span class="text-xs text-gray-400">実績</span>
+                            {% elif latest_dividend.year_end_dividend is not None %}
+                                {{ latest_dividend.year_end_dividend }}<span class="text-xs font-normal text-gray-400 ml-0.5">円</span><br><span class="text-xs text-gray-400">予想</span>
+                            {% endif %}
+                        </dd>
+                    </div>
+                    {% endif %}
+                    {% if latest_dividend.annual_dividend is not None or latest_dividend.annual_dividend_paid is not None or valuation.forecast_dividend %}
+                    <div>
+                        <dt class="text-xs text-gray-400 font-medium">年間配当</dt>
+                        <dd class="font-semibold tabular-nums text-indigo-700">
+                            {% if latest_dividend.annual_dividend_paid is not None %}
+                                {{ latest_dividend.annual_dividend_paid }}<span class="text-xs font-normal text-gray-400 ml-0.5">円</span><br><span class="text-xs text-gray-400">実績</span>
+                            {% elif latest_dividend.annual_dividend is not None %}
+                                {{ latest_dividend.annual_dividend }}<span class="text-xs font-normal text-gray-400 ml-0.5">円</span><br><span class="text-xs text-gray-400">予想</span>
+                            {% elif valuation.forecast_dividend %}
+                                {{ valuation.forecast_dividend|fmt_num:"2" }}<span class="text-xs font-normal text-gray-400 ml-0.5">円</span><br><span class="text-xs text-gray-400">予想(計)</span>
+                            {% endif %}
+                        </dd>
+                    </div>
+                    {% endif %}
+                </dl>
+            </div>
+            {% endif %}
+
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Financials ───────────────────────────────────────────────────────── #}
+    {% if fin_rows %}
+    {{ fin_rows|json_script:"fin-data" }}
+    <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-100 flex items-baseline gap-3">
+            <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide border-l-4 border-indigo-500 pl-3">財務情報</h2>
+            <span class="text-xs text-gray-400">単位：百万円（税引後純利益・EPS・BPS・ROEは円・%）</span>
+        </div>
+
+        {# Tab buttons #}
+        <div class="flex border-b border-gray-100 px-6">
+            <button class="fin-tab-btn active-tab px-4 py-3 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600" data-tab="pl">損益計算書</button>
+            <button class="fin-tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" data-tab="bs">貸借対照表</button>
+            <button class="fin-tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" data-tab="cf">キャッシュフロー</button>
+        </div>
+
+        <div class="p-6">
+
+        {# ── P&L tab ── #}
+        <div id="fin-tab-pl" class="fin-tab">
+            <canvas id="chart-pl" height="100" class="mb-6"></canvas>
+            <div class="overflow-x-auto">
+            <table class="w-full text-sm text-right">
+                <thead>
+                    <tr class="text-xs text-gray-500 border-b-2 border-gray-200">
+                        <th class="py-2 text-left font-medium text-gray-600 w-44">項目</th>
+                        {% for r in fin_rows %}<th class="py-2 px-3 font-medium">{{ r.label }}</th>{% endfor %}
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr class="hover:bg-gray-50 font-medium">
+                        <td class="py-2.5 text-left text-gray-700">売上高</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.revenue|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50 bg-gray-50/50">
+                        <td class="py-1.5 text-left text-gray-400 text-xs pl-3">前期比</td>
+                        {% for r in fin_rows %}<td class="py-1.5 px-3">{% yoy_badge r.revenue_yoy %}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50 font-medium">
+                        <td class="py-2.5 text-left text-gray-700">営業利益</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.operating_profit|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50 bg-gray-50/50">
+                        <td class="py-1.5 text-left text-gray-400 text-xs pl-3">前期比 / 利益率</td>
+                        {% for r in fin_rows %}
+                        <td class="py-1.5 px-3 text-xs">
+                            {% yoy_badge r.op_profit_yoy %}
+                            {% if r.operating_margin is not None %}<span class="text-gray-400 ml-1">/ {{ r.operating_margin|fmt_num:"1" }}%</span>{% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2.5 text-left text-gray-600">経常利益</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.ordinary_profit|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50 font-medium">
+                        <td class="py-2.5 text-left text-gray-700">純利益</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.net_income|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50 border-t border-gray-200">
+                        <td class="py-2.5 text-left text-gray-500">EPS（円）</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.eps|fmt_num:"2" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2.5 text-left text-gray-500">ROE（%）</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.roe|fmt_num:"1" }}</td>{% endfor %}
+                    </tr>
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        {# ── B/S tab ── #}
+        <div id="fin-tab-bs" class="fin-tab hidden">
+            <canvas id="chart-bs" height="100" class="mb-6"></canvas>
+            <div class="overflow-x-auto">
+            <table class="w-full text-sm text-right">
+                <thead>
+                    <tr class="text-xs text-gray-500 border-b-2 border-gray-200">
+                        <th class="py-2 text-left font-medium text-gray-600 w-44">項目</th>
+                        {% for r in fin_rows %}<th class="py-2 px-3 font-medium">{{ r.label }}</th>{% endfor %}
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr class="hover:bg-gray-50 font-medium">
+                        <td class="py-2.5 text-left text-gray-700">総資産</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.total_assets|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2.5 text-left text-gray-600">純資産</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.net_assets|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2.5 text-left text-gray-600">有利子負債</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.interest_bearing_debt|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50 border-t border-gray-200">
+                        <td class="py-2.5 text-left text-gray-500">自己資本比率（%）</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.equity_ratio|fmt_num:"1" }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2.5 text-left text-gray-500">BPS（円）</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.bps|fmt_num:"2" }}</td>{% endfor %}
+                    </tr>
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        {# ── CF tab ── #}
+        <div id="fin-tab-cf" class="fin-tab hidden">
+            <canvas id="chart-cf" height="100" class="mb-6"></canvas>
+            <div class="overflow-x-auto">
+            <table class="w-full text-sm text-right">
+                <thead>
+                    <tr class="text-xs text-gray-500 border-b-2 border-gray-200">
+                        <th class="py-2 text-left font-medium text-gray-600 w-44">項目</th>
+                        {% for r in fin_rows %}<th class="py-2 px-3 font-medium">{{ r.label }}</th>{% endfor %}
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr class="hover:bg-gray-50 font-medium">
+                        <td class="py-2.5 text-left text-gray-700">営業CF</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.operating_cf|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2.5 text-left text-gray-600">投資CF</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.investing_cf|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2.5 text-left text-gray-600">財務CF</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.financing_cf|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50 border-t border-gray-200 font-medium">
+                        <td class="py-2.5 text-left text-gray-700">フリーCF</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.fcf|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2.5 text-left text-gray-500">設備投資（CapEx）</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.capex|fmt_num }}</td>{% endfor %}
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="py-2.5 text-left text-gray-500">減価償却費</td>
+                        {% for r in fin_rows %}<td class="py-2.5 px-3 tabular-nums">{{ r.depreciation|fmt_num }}</td>{% endfor %}
+                    </tr>
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        </div>{# /p-6 #}
     </div>
     {% endif %}
 
@@ -291,7 +521,7 @@
     <div class="bg-white rounded-xl shadow-md overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
             <div>
-                <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide">大株主</h2>
+                <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide border-l-4 border-indigo-500 pl-3">大株主</h2>
                 {% if latest_snapshot.as_of_date %}
                 <p class="text-xs text-gray-400 mt-1">
                     基準日: {{ latest_snapshot.as_of_date|date:"Y-m-d" }}{% if latest_snapshot.total_shares %} &middot; 発行済株式数: {{ latest_snapshot.total_shares|floatformat:0|intcomma }} 株{% endif %}
@@ -406,152 +636,65 @@
     {% endif %}
     {% endif %}
 
-
-
-    {# ── Financials ───────────────────────────────────────────────────────── #}
-    {% if fin_rows %}
-    {{ fin_rows|json_script:"fin-data" }}
+    {# ── Listings table ───────────────────────────────────────────────────── #}
+    {% with all_listings=company.listings.all %}
+    {% if all_listings %}
     <div class="bg-white rounded-xl shadow-md overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-100">
-            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide">財務情報 <span class="text-xs font-normal normal-case text-gray-400">（単位：百万円）</span></h2>
+            <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide border-l-4 border-indigo-500 pl-3">上場情報</h2>
         </div>
-
-        {# Tab buttons #}
-        <div class="flex border-b border-gray-100 px-6">
-            <button class="fin-tab-btn active-tab px-4 py-3 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600" data-tab="pl">損益</button>
-            <button class="fin-tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" data-tab="bs">貸借対照表</button>
-            <button class="fin-tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" data-tab="cf">キャッシュフロー</button>
-        </div>
-
-        <div class="p-6">
-
-        {# ── P&L tab ── #}
-        <div id="fin-tab-pl" class="fin-tab">
-            <canvas id="chart-pl" height="100" class="mb-6"></canvas>
-            <div class="overflow-x-auto">
-            <table class="w-full text-sm text-right">
-                <thead>
-                    <tr class="text-xs text-gray-500 border-b border-gray-200">
-                        <th class="py-2 text-left font-medium text-gray-600 w-40">項目</th>
-                        {% for r in fin_rows %}<th class="py-2 px-2 font-medium">{{ r.label }}</th>{% endfor %}
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100">
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">売上高</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.revenue|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">営業利益</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.operating_profit|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">経常利益</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.ordinary_profit|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">純利益</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.net_income|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">EPS（円）</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{% if r.eps is not None %}{{ r.eps|floatformat:2 }}{% else %}—{% endif %}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">ROE（%）</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{% if r.roe is not None %}{{ r.roe|floatformat:1 }}{% else %}—{% endif %}</td>{% endfor %}
-                    </tr>
-                </tbody>
-            </table>
-            </div>
-        </div>
-
-        {# ── B/S tab ── #}
-        <div id="fin-tab-bs" class="fin-tab hidden">
-            <canvas id="chart-bs" height="100" class="mb-6"></canvas>
-            <div class="overflow-x-auto">
-            <table class="w-full text-sm text-right">
-                <thead>
-                    <tr class="text-xs text-gray-500 border-b border-gray-200">
-                        <th class="py-2 text-left font-medium text-gray-600 w-40">項目</th>
-                        {% for r in fin_rows %}<th class="py-2 px-2 font-medium">{{ r.label }}</th>{% endfor %}
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100">
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">総資産</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.total_assets|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">純資産</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.net_assets|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">有利子負債</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.interest_bearing_debt|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">自己資本比率（%）</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{% if r.equity_ratio is not None %}{{ r.equity_ratio|floatformat:1 }}{% else %}—{% endif %}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">BPS（円）</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{% if r.bps is not None %}{{ r.bps|floatformat:2 }}{% else %}—{% endif %}</td>{% endfor %}
-                    </tr>
-                </tbody>
-            </table>
-            </div>
-        </div>
-
-        {# ── CF tab ── #}
-        <div id="fin-tab-cf" class="fin-tab hidden">
-            <canvas id="chart-cf" height="100" class="mb-6"></canvas>
-            <div class="overflow-x-auto">
-            <table class="w-full text-sm text-right">
-                <thead>
-                    <tr class="text-xs text-gray-500 border-b border-gray-200">
-                        <th class="py-2 text-left font-medium text-gray-600 w-40">項目</th>
-                        {% for r in fin_rows %}<th class="py-2 px-2 font-medium">{{ r.label }}</th>{% endfor %}
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100">
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">営業CF</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.operating_cf|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">投資CF</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.investing_cf|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">財務CF</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.financing_cf|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">設備投資</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.capex|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">フリーCF</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.fcf|default:"—" }}</td>{% endfor %}
-                    </tr>
-                    <tr class="hover:bg-gray-50">
-                        <td class="py-2 text-left text-gray-600">減価償却費</td>
-                        {% for r in fin_rows %}<td class="py-2 px-2 tabular-nums">{{ r.depreciation|default:"—" }}</td>{% endfor %}
-                    </tr>
-                </tbody>
-            </table>
-            </div>
-        </div>
-
-        </div>{# /p-6 #}
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide border-b border-gray-200">
+                    <th class="px-4 py-3 text-left">取引所</th>
+                    <th class="px-4 py-3 text-left">市場区分</th>
+                    <th class="px-4 py-3 text-left hidden sm:table-cell">上場日</th>
+                    <th class="px-4 py-3 text-left hidden sm:table-cell">廃止日</th>
+                    <th class="px-4 py-3 text-center">状態</th>
+                    <th class="px-4 py-3 text-left hidden md:table-cell">備考</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for listing in all_listings %}
+                <tr>
+                    <td class="px-4 py-3 font-medium">
+                        <a href="/companies/?exchange={{ listing.exchange.code }}"
+                           class="text-indigo-600 hover:text-indigo-800 hover:underline">
+                            {{ listing.exchange.short_name|default:listing.exchange.name_ja }}
+                        </a>
+                    </td>
+                    <td class="px-4 py-3">
+                        {% if listing.market_segment %}
+                        <a href="/companies/?segment={{ listing.market_segment }}"
+                           class="text-indigo-600 hover:text-indigo-800 hover:underline">
+                            {{ listing.get_market_segment_display }}
+                        </a>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-gray-600 hidden sm:table-cell">{{ listing.listing_date|date:"Y-m-d"|default:"—" }}</td>
+                    <td class="px-4 py-3 text-gray-600 hidden sm:table-cell">{{ listing.delisting_date|date:"Y-m-d"|default:"—" }}</td>
+                    <td class="px-4 py-3 text-center">
+                        {% if listing.status == "active" %}
+                        <span class="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2 py-0.5">上場中</span>
+                        {% elif listing.status == "delisted" %}
+                        <span class="text-xs bg-red-50 text-red-600 border border-red-200 rounded-full px-2 py-0.5">廃止</span>
+                        {% else %}
+                        <span class="text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2 py-0.5">{{ listing.get_status_display }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{{ listing.notes|default:"" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
     {% endif %}
+    {% endwith %}
 
     {# ── Disclosures ──────────────────────────────────────────────────────── #}
     <div class="bg-white rounded-xl shadow-md overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide">適時開示</h2>
+            <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide border-l-4 border-indigo-500 pl-3">適時開示</h2>
             <span class="text-xs text-gray-400">全 {{ total_disclosures }} 件</span>
         </div>
         {% if disclosures %}
