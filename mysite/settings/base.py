@@ -31,6 +31,8 @@ INSTALLED_APPS = [
     "financials",
     "accounts",
     "cal",
+    "watchlists",
+    "portfolio",
     
     "wagtail.contrib.forms",
     "django.contrib.postgres",

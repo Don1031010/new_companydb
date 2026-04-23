@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}ブローカー管理 — ポートフォリオ{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 py-8">
+
+    <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center gap-3">
+            <a href="{% url 'portfolio:dashboard' %}" class="text-gray-400 hover:text-indigo-600 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd"/></svg>
+            </a>
+            <h1 class="text-2xl font-bold text-gray-900">ブローカー</h1>
+        </div>
+        <a href="{% url 'portfolio:broker_create' %}"
+           class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/>
+            </svg>
+            追加
+        </a>
+    </div>
+
+    {% if brokers %}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <ul class="divide-y divide-gray-100">
+            {% for b in brokers %}
+            <li class="px-5 py-3 flex items-center justify-between gap-4">
+                <div>
+                    <div class="font-medium text-gray-900 text-sm">{{ b.name }}</div>
+                    <div class="text-xs text-gray-400 mt-0.5">{{ b.get_broker_type_display }}{% if b.notes %} · {{ b.notes|truncatechars:60 }}{% endif %}</div>
+                </div>
+                <div class="flex items-center gap-3 shrink-0">
+                    <a href="{% url 'portfolio:broker_edit' b.pk %}" class="text-xs text-gray-400 hover:text-indigo-600">編集</a>
+                    <a href="{% url 'portfolio:broker_delete' b.pk %}" class="text-xs text-gray-400 hover:text-red-500">削除</a>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% else %}
+    <div class="text-center py-16 text-gray-400">
+        <p class="mb-3">ブローカーがまだ登録されていません。</p>
+        <a href="{% url 'portfolio:broker_create' %}" class="text-indigo-600 hover:underline text-sm">最初のブローカーを追加</a>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

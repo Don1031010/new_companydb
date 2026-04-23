@@ -1,3 +1,5 @@
+from urllib.parse import urlencode
+
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.shortcuts import render, get_object_or_404
 from django.db import models
@@ -252,6 +254,65 @@ def company_detail(request, stock_code):
         "dividend_yield": round(_fdiv / price * 100, 2) if _fdiv and price else None,
     })
 
+    # Prev/next navigation (respects the same filters as company_list)
+    nav_q        = request.GET.get("q", "").strip()
+    nav_industry = request.GET.get("industry", "")
+    nav_segment  = request.GET.get("segment", "")
+    nav_exchange = request.GET.get("exchange", "")
+    nav_sort     = request.GET.get("sort", "")
+
+    nav_qs = Company.objects.exclude(listings__market_segment="tse_pro")
+    if nav_q:
+        nav_qs = nav_qs.filter(
+            Q(stock_code__icontains=nav_q)
+            | Q(name_ja__icontains=nav_q)
+            | Q(name_kana__icontains=nav_q)
+            | Q(name_en__icontains=nav_q)
+        )
+    if nav_industry:
+        nav_qs = nav_qs.filter(industry_33=nav_industry)
+    if nav_segment:
+        nav_qs = nav_qs.filter(listings__market_segment=nav_segment, listings__status="active")
+    if nav_exchange:
+        nav_qs = nav_qs.filter(listings__exchange__code=nav_exchange, listings__status="active")
+    if nav_sort == "market_cap_asc":
+        nav_qs = nav_qs.order_by(F("market_cap").asc(nulls_last=True))
+    elif nav_sort == "market_cap_desc":
+        nav_qs = nav_qs.order_by(F("market_cap").desc(nulls_last=True))
+    else:
+        nav_qs = nav_qs.order_by("stock_code")
+
+    codes = list(nav_qs.distinct().values_list("stock_code", flat=True))
+    try:
+        idx = codes.index(stock_code)
+        prev_code = codes[idx - 1] if idx > 0 else None
+        next_code = codes[idx + 1] if idx < len(codes) - 1 else None
+    except ValueError:
+        prev_code = next_code = None
+
+    can_edit_forecast = (
+        request.user.is_authenticated
+        and request.user.has_perm("financials.change_forecastrecord")
+    )
+
+    # Watchlist quick-add data
+    from watchlists.models import WatchList as WatchListModel, WatchListEntry as WatchListEntryModel
+    user_watchlists = []
+    company_in_watchlists = set()
+    if request.user.is_authenticated:
+        user_watchlists = list(request.user.watchlists.all())
+        company_in_watchlists = set(
+            WatchListEntryModel.objects.filter(
+                watchlist__owner=request.user, company=company
+            ).values_list("watchlist_id", flat=True)
+        )
+
+    nav_params = {k: v for k, v in [
+        ("q", nav_q), ("industry", nav_industry), ("segment", nav_segment),
+        ("exchange", nav_exchange), ("sort", nav_sort),
+    ] if v}
+    nav_qs_str = ("?" + urlencode(nav_params)) if nav_params else ""
+
     return render(request, "listings/company_detail.html", {
         "company": company,
         "latest_snapshot": latest_snapshot,
@@ -265,6 +326,12 @@ def company_detail(request, stock_code):
         "valuation": valuation,
         "latest_forecast": latest_forecast,
         "latest_dividend": latest_dividend,
+        "can_edit_forecast": can_edit_forecast,
+        "user_watchlists": user_watchlists,
+        "company_in_watchlists": company_in_watchlists,
+        "prev_code": prev_code,
+        "next_code": next_code,
+        "nav_qs_str": nav_qs_str,
     })
 
 

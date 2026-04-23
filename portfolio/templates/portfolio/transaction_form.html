@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}{% if action == "create" %}取引を追加{% else %}取引を編集{% endif %} — ポートフォリオ{% endblock %}
+
+{% block content %}
+<div class="max-w-lg mx-auto px-4 py-10">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+
+        <h1 class="text-xl font-bold text-gray-900 {% if is_clone %}mb-3{% else %}mb-6{% endif %}">
+            {% if action == "create" %}取引を追加{% else %}取引を編集{% endif %}
+        </h1>
+        {% if is_clone %}
+        <div class="mb-5 flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-lg px-3 py-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"/><path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z"/></svg>
+            既存の取引から複製しました。内容を確認・修正してから保存してください。
+        </div>
+        {% endif %}
+
+        <form method="post" novalidate id="txn-form">
+            {% csrf_token %}
+            <div class="space-y-4">
+
+                {# Transaction type #}
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">取引種別 <span class="text-red-400">*</span></label>
+                    <select name="transaction_type" id="id_transaction_type"
+                            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                        <option value="">-- 選択 --</option>
+                        {% for val, label in form.transaction_type.field.choices %}
+                        {% if val %}<option value="{{ val }}" {% if form.transaction_type.value == val %}selected{% endif %}>{{ label }}</option>{% endif %}
+                        {% endfor %}
+                    </select>
+                    {% if form.transaction_type.errors %}<p class="mt-1 text-xs text-red-500">{{ form.transaction_type.errors|join:", " }}</p>{% endif %}
+                </div>
+
+                {# Account type #}
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">口座種別 <span class="text-red-400">*</span></label>
+                    <select name="account_type"
+                            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                        {% for val, label in form.account_type.field.choices %}
+                        <option value="{{ val }}" {% if form.account_type.value == val %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                {# Date #}
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">取引日 <span class="text-red-400">*</span></label>
+                    <input type="date" name="date" value="{{ form.date.value|default:'' }}"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                    {% if form.date.errors %}<p class="mt-1 text-xs text-red-500">{{ form.date.errors|join:", " }}</p>{% endif %}
+                </div>
+
+                {# Broker #}
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">ブローカー</label>
+                    <select name="broker" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                        <option value="">-- なし --</option>
+                        {% for b in form.broker.field.queryset %}
+                        <option value="{{ b.pk }}" {% if form.broker.value == b.pk|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                {# Stock code — shown for buy / sell / dividend #}
+                <div id="field-stock-code">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">銘柄コード</label>
+                    <input type="text" name="stock_code" value="{{ form.stock_code.value|default:'' }}"
+                           placeholder="例：7203"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 font-mono">
+                    <p class="mt-1 text-xs text-gray-400">{{ form.stock_code.help_text }}</p>
+                    {% if form.stock_code.errors %}<p class="mt-1 text-xs text-red-500">{{ form.stock_code.errors|join:", " }}</p>{% endif %}
+                </div>
+
+                {# Quantity + Price — shown for buy / sell #}
+                <div id="field-trade" class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">数量（株）<span class="text-red-400">*</span></label>
+                        <input type="number" name="quantity" value="{{ form.quantity.value|default:'' }}" min="0" step="1"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                        {% if form.quantity.errors %}<p class="mt-1 text-xs text-red-500">{{ form.quantity.errors|join:", " }}</p>{% endif %}
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">単価（円）<span class="text-red-400">*</span></label>
+                        <input type="number" name="price" value="{{ form.price.value|default:'' }}" min="0" step="0.01"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                        {% if form.price.errors %}<p class="mt-1 text-xs text-red-500">{{ form.price.errors|join:", " }}</p>{% endif %}
+                    </div>
+                </div>
+
+                {# Computed total — shown for buy / sell #}
+                <div id="field-total" class="bg-gray-50 rounded-lg px-4 py-2.5 flex justify-between items-center text-sm">
+                    <span class="text-gray-500">約定金額</span>
+                    <span id="computed-total" class="font-semibold tabular-nums text-gray-800">—</span>
+                </div>
+
+                {# Amount — shown for dividend / fee / deposit / withdrawal #}
+                <div id="field-amount">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">金額（円）<span class="text-red-400">*</span></label>
+                    <input type="number" name="amount" value="{{ form.amount.value|default:'' }}" min="0" step="0.01"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                    {% if form.amount.errors %}<p class="mt-1 text-xs text-red-500">{{ form.amount.errors|join:", " }}</p>{% endif %}
+                </div>
+
+                {# Fees + Taxes — shown for buy / sell / dividend #}
+                <div id="field-fees" class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">手数料（円）</label>
+                        <input type="number" name="fees" value="{{ form.fees.value|default:'0' }}" min="0" step="0.01"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">税金（円）</label>
+                        <input type="number" name="taxes" value="{{ form.taxes.value|default:'0' }}" min="0" step="0.01"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                    </div>
+                </div>
+
+                {# Note #}
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">メモ</label>
+                    <textarea name="note" rows="2"
+                              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none">{{ form.note.value|default:'' }}</textarea>
+                </div>
+
+                {% if form.non_field_errors %}
+                <div class="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-600">
+                    {% for e in form.non_field_errors %}{{ e }}{% endfor %}
+                </div>
+                {% endif %}
+
+            </div>
+
+            <div class="flex items-center gap-3 mt-7">
+                <button type="submit"
+                        class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+                    {% if action == "create" %}追加{% else %}保存{% endif %}
+                </button>
+                <a href="{% url 'portfolio:transaction_list' %}" class="text-sm text-gray-500 hover:text-gray-700">キャンセル</a>
+            </div>
+        </form>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    const typeEl = document.getElementById('id_transaction_type');
+    const qtyEl  = document.querySelector('[name=quantity]');
+    const priceEl= document.querySelector('[name=price]');
+    const totalEl= document.getElementById('computed-total');
+
+    const TRADE_FIELDS    = ['field-stock-code', 'field-trade', 'field-total', 'field-fees'];
+    const CASH_FIELDS     = ['field-amount'];
+    const DIVIDEND_FIELDS = ['field-stock-code', 'field-amount', 'field-fees'];
+    const SHOW_MAP = {
+        buy:        ['field-stock-code', 'field-trade', 'field-total', 'field-fees'],
+        sell:       ['field-stock-code', 'field-trade', 'field-total', 'field-fees'],
+        dividend:   ['field-stock-code', 'field-amount', 'field-fees'],
+        fee:        ['field-amount'],
+        deposit:    ['field-amount'],
+        withdrawal: ['field-amount'],
+    };
+    const ALL = ['field-stock-code', 'field-trade', 'field-total', 'field-amount', 'field-fees'];
+
+    function updateFields() {
+        const t = typeEl.value;
+        const visible = SHOW_MAP[t] || [];
+        ALL.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = visible.includes(id) ? '' : 'none';
+        });
+    }
+
+    function updateTotal() {
+        const q = parseFloat(qtyEl.value) || 0;
+        const p = parseFloat(priceEl.value) || 0;
+        totalEl.textContent = q && p ? (q * p).toLocaleString('ja-JP') + ' 円' : '—';
+    }
+
+    typeEl.addEventListener('change', updateFields);
+    qtyEl.addEventListener('input', updateTotal);
+    priceEl.addEventListener('input', updateTotal);
+
+    updateFields();
+    updateTotal();
+}());
+</script>
+{% endblock %}

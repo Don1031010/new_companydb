@@ -47,4 +47,37 @@
         </dl>
     </div>
 </div>
+
+{# Watchlist summary #}
+<div class="max-w-2xl mx-auto px-4 pb-10">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-base font-bold text-gray-900">ウォッチリスト</h2>
+            <a href="{% url 'watchlists:index' %}" class="text-sm text-indigo-600 hover:underline">すべて見る</a>
+        </div>
+        {% with watchlists=request.user.watchlists.all %}
+        {% if watchlists %}
+        <ul class="divide-y divide-gray-100">
+            {% for wl in watchlists|slice:":5" %}
+            <li class="py-2 flex items-center justify-between">
+                <a href="{% url 'watchlists:detail' wl.pk %}" class="text-sm font-medium text-gray-800 hover:text-indigo-700 transition-colors">{{ wl.name }}</a>
+                <div class="flex items-center gap-2">
+                    {% if wl.is_private %}<span class="text-xs text-gray-400">非公開</span>{% endif %}
+                    <span class="text-xs text-gray-400">{{ wl.entries.count }} 社</span>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% if watchlists.count > 5 %}
+        <p class="mt-2 text-xs text-gray-400 text-right">他 {{ watchlists.count|add:"-5" }} 件</p>
+        {% endif %}
+        {% else %}
+        <div class="text-center py-6 text-sm text-gray-400">
+            <p>ウォッチリストがありません。</p>
+            <a href="{% url 'watchlists:create' %}" class="mt-2 inline-block text-indigo-600 hover:underline">最初のリストを作成</a>
+        </div>
+        {% endif %}
+        {% endwith %}
+    </div>
+</div>
 {% endblock %}

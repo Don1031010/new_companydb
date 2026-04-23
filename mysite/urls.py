@@ -16,6 +16,8 @@ urlpatterns = [
     path("calendar/", include("cal.urls")),
     path("documents/", include(wagtaildocs_urls)),
     path("search/", search_views.search, name="search"),
+    path("watchlists/", include("watchlists.urls")),
+    path("portfolio/", include("portfolio.urls")),
     path("companies/", listings_views.company_list, name="company_list"),
     path("companies/<str:stock_code>/", listings_views.company_detail, name="company_detail"),
     path("companies/<str:stock_code>/disclosures/", listings_views.company_disclosures, name="company_disclosures"),
